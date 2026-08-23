@@ -16,8 +16,8 @@ class JobService:
             if not res.data:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
                 
-            job_data = res.data[0]
-            # Explicit mapping for public contract
+            # Use copy() to avoid mutating the original dictionary
+            job_data = res.data[0].copy()
             job_data["job_id"] = job_data.pop("id")
             
             return JobMetadata(**job_data)

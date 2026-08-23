@@ -39,11 +39,19 @@ async def check_supabase() -> bool:
 
 async def get_system_health() -> Dict[str, Any]:
     """Runs all dependency checks concurrently."""
-    qdrant_ok, redis_ok, supabase_ok = await asyncio.gather(
+    # return_exceptions=True ensures that if a check raises an exception,
+    # it is returned as a result object rather than crashing the gather.
+    results = await asyncio.gather(
         check_qdrant(),
         check_redis(),
-        check_supabase()
+        check_supabase(),
+        return_exceptions=True
     )
+    
+    # Safely evaluate results: if it's an exception or not True, it's False
+    qdrant_ok = results[0] if (not isinstance(results[0], Exception) and results[0] is True) else False
+    redis_ok = results[1] if (not isinstance(results[1], Exception) and results[1] is True) else False
+    supabase_ok = results[2] if (not isinstance(results[2], Exception) and results[2] is True) else False
     
     is_ready = all([qdrant_ok, redis_ok, supabase_ok])
     

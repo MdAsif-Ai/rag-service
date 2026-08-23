@@ -60,9 +60,11 @@ def test_invalid_extension(client):
     assert response.status_code == 415
 
 def test_oversized_file(client):
-    # Patch settings to limit file size to 1 byte for this test
+    # Patch settings to limit file size to ~1 byte for this test
     with patch("app.services.ingestion.get_settings") as mock_settings:
-        mock_settings.return_value.MAX_FILE_SIZE_MB = 0.0001
+        # 0.000001 MB * 1024 * 1024 = 1.04 bytes. 
+        # The uploaded file is 12 bytes, so it will be rejected.
+        mock_settings.return_value.MAX_FILE_SIZE_MB = 0.000001
         mock_settings.return_value.SUPPORTED_FILE_TYPES = ["pdf"]
         
         response = client.post(
