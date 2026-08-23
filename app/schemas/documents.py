@@ -1,10 +1,10 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Optional
 from uuid import UUID
+from pydantic import BaseModel, Field, ConfigDict
 
-from pydantic import BaseModel, Field
-
+from .jobs import JobMetadata
 
 class DocumentStatus(str, Enum):
     PENDING = "PENDING"
@@ -13,25 +13,20 @@ class DocumentStatus(str, Enum):
     FAILED = "FAILED"
     DELETED = "DELETED"
 
-
-class DocumentBase(BaseModel):
-    course_id: str = Field(..., min_length=1, description="The course this document belongs to")
-    filename: str = Field(..., min_length=1)
-    source_type: str = Field(..., description="e.g., pdf, docx, youtube, url")
-    file_metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional metadata extracted from the file or provided by teacher")
-
-
-class DocumentCreate(DocumentBase):
-    pass
-
-
-class DocumentMetadata(DocumentBase):
-    id: UUID = Field(..., alias="document_id")
+class DocumentMetadata(BaseModel):
+    document_id: UUID = Field(..., alias="id")
+    course_id: str
+    filename: str
+    file_type: str
+    file_size: int
+    storage_path: str
+    checksum: str
     status: DocumentStatus
-    chunk_count: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    chunk_count: Optional[int] = None
 
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
+
+class DocumentDetail(DocumentMetadata):
+    latest_job: Optional[JobMetadata] = None
