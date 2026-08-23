@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # FastAPI Application
+  # ==========================================
+  rag-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      - redis
+    healthcheck:
+      # Liveness check only. Does not hit ML models or external DBs.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # No GPU access needed for the API routing layer
+    networks:
+      - rag-network
+
+  # ==========================================
+  # Celery Background Worker
+  # ==========================================
+  rag-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Override the default CMD to run Celery
+    command: ["celery", "-A", "app.jobs.celery", "worker", "--loglevel=info", "--concurrency=1"]
+    depends_on:
+      - redis
+    healthcheck:
+      # Celery worker ping check
+      test: ["CMD-SHELL", "celery -A app.jobs.celery inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # GPU Support for ML Inference (BGE-M3, Reranker)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - rag-network
+
+  # ==========================================
+  # Redis (Message Broker & Result Backend)
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    restart: unless-stopped
+    # Enable basic persistence (RDB snapshots) so queued jobs survive restarts
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - rag-network
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  redis_data:
