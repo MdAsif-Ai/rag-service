@@ -53,15 +53,31 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = Field(default="BAAI/bge-reranker-v2-m3")
     RERANKER_DEVICE: Literal["cpu", "cuda"] = Field(default="cuda")
 
+        # --- RERANKER ---
+    RERANKER_MODEL: str = Field(default="BAAI/bge-reranker-v2-m3")
+    RERANKER_DEVICE: Literal["cpu", "cuda"] = Field(default="cuda")
+    RERANK_BATCH_SIZE: int = Field(default=16, description="Batch size for model inference")
+    RERANK_MAX_CANDIDATES: int = Field(default=30, description="Max candidates to rerank from the fused pool")
+    RERANK_FINAL_TOP_K: int = Field(default=5, description="Default number of final results to return if not specified by API")
+
     # --- RETRIEVAL ---
     DEFAULT_TOP_K: int = Field(default=50)
     RERANK_TOP_K: int = Field(default=10)
     FINAL_TOP_K: int = Field(default=5)
 
     # --- INGESTION ---
-    MAX_FILE_SIZE_MB: int = Field(default=50)
-    CHUNK_SIZE: int = Field(default=1024)
-    CHUNK_OVERLAP: int = Field(default=100)
+    MAX_FILE_SIZE_MB: int = 50
+    SUPPORTED_FILE_TYPES: list[str] = ["pdf", "docx", "pptx", "txt", "md", "html"]
+    # Chunking Configuration (Token-based)
+    CHUNK_SIZE_TOKENS: int = Field(default=600, description="Target tokens per chunk (400-700 recommended)")
+    CHUNK_OVERLAP_TOKENS: int = Field(default=100, description="Overlap tokens (50-100 recommended)")
+    CHUNK_TOKENIZER: str = Field(default="cl100k_base", description="Tiktoken encoder name")
+    CHUNK_INCLUDE_CONTEXT_PREFIX: bool = Field(default=True, description="Prepend heading hierarchy to chunk content")
+
+        # --- FUSION ---
+    FUSION_RRF_K: int = Field(default=60, description="K parameter for Reciprocal Rank Fusion")
+    FUSION_DENSE_WEIGHT: float = Field(default=1.0, description="Weight multiplier for dense retrieval ranks")
+    FUSION_SPARSE_WEIGHT: float = Field(default=1.0, description="Weight multiplier for sparse retrieval ranks")
 
 
 @functools.lru_cache(maxsize=1)

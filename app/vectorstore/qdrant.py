@@ -194,10 +194,21 @@ class QdrantRepository:
 
     def _format_search_result(self, result: Any) -> Dict[str, Any]:
         """Formats a Qdrant search result into a standard dictionary."""
+        payload = result.payload or {}
         return {
+            "chunk_id": payload.get("chunk_id", result.id),
+            "document_id": payload.get("document_id"),
+            "course_id": payload.get("course_id"),
+            "filename": payload.get("filename"),
+            "content": payload.get("content"),
+            "page": payload.get("page"),
+            "chapter": payload.get("chapter"),
+            "section": payload.get("section"),
+            "chunk_index": payload.get("chunk_index"),
             "score": result.score,
-            "payload": result.payload or {}
+            "metadata": payload
         }
+
 
 
 # --- Dependency Injection / Factory ---

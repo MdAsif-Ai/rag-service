@@ -1,178 +1,126 @@
-import re
 from typing import List, Optional
 from uuid import UUID
+from loguru import logger
 
-from app.core.config import get_settings
-from app.ingestion.loaders.base import ParsedSection
-from .base import BaseChunker, TextChunk
-
+from .base import BaseChunker
+from .models import ParsedSection, TextChunk
+from .recursive import RecursiveTokenSplitter
+from .utils import generate_deterministic_id, validate_chunk
 
 class StructureAwareChunker(BaseChunker):
-    """
-    Chunking strategy that respects document structure (sections, pages).
-    Falls back to recursive sentence/word splitting when structural blocks
-    exceed the target chunk size.
-    """
+    def __init__(
+        self, 
+        chunk_size_tokens: int = 600, 
+        chunk_overlap_tokens: int = 100,
+        tokenizer_name: str = "cl100k_base",
+        include_contextual_prefix: bool = True
+    ):
+        self.chunk_size = chunk_size_tokens
+        self.chunk_overlap = chunk_overlap_tokens
+        self.include_contextual_prefix = include_contextual_prefix
+        self.recursive_splitter = RecursiveTokenSplitter(
+            chunk_size_tokens, 
+            chunk_overlap_tokens, 
+            tokenizer_name
+        )
+        self.encoder = self.recursive_splitter.encoder
 
-    def __init__(self, target_chunk_size: int = 600, chunk_overlap: int = 100):
-        """
-        Args:
-            target_chunk_size: Target size in characters (approx. 400-800 tokens).
-            chunk_overlap: Overlap in characters to preserve context across boundaries.
-        """
-        self.target_chunk_size = target_chunk_size
-        self.chunk_overlap = chunk_overlap
+    def _build_contextual_prefix(self, section: ParsedSection) -> str:
+        if not self.include_contextual_prefix:
+            return ""
+        parts = []
+        if section.chapter: parts.append(f"Chapter: {section.chapter}")
+        if section.section: parts.append(f"Section: {section.section}")
+        if section.subsection: parts.append(f"Subsection: {section.subsection}")
+        return "\n".join(parts) + "\n\n" if parts else ""
+
+    def _split_table(self, table_text: str) -> List[str]:
+        """Intelligently splits oversized tables while keeping headers."""
+        lines = table_text.strip().split("\n")
+        if len(lines) < 2:
+            return self.recursive_splitter.split_text(table_text)
+            
+        header = lines[0]
+        # Assuming markdown table format with separator on line 2
+        separator = lines[1] if len(lines) > 1 and "---" in lines[1] else ""
+        header_block = f"{header}\n{separator}" if separator else header
+        
+        chunks = []
+        current_chunk = header_block
+        
+        for line in lines[2 if separator else 1:]:
+            prospective_chunk = f"{current_chunk}\n{line}"
+            if len(self.encoder.encode(prospective_chunk)) <= self.chunk_size:
+                current_chunk = prospective_chunk
+            else:
+                if current_chunk != header_block:
+                    chunks.append(current_chunk)
+                current_chunk = f"{header_block}\n{line}" if header_block else line
+                
+        if current_chunk and current_chunk != header_block:
+            chunks.append(current_chunk)
+            
+        return chunks if chunks else [table_text]
 
     def chunk(
         self,
         sections: List[ParsedSection],
         document_id: UUID,
         course_id: str,
-        filename: str,
-        chapter: Optional[str] = None
+        filename: str
     ) -> List[TextChunk]:
-        """
-        Processes sections into chunks. If a section is smaller than target_chunk_size,
-        it is kept intact. Otherwise, it is recursively split.
-        """
-        settings = get_settings()
-        # Fallback to settings if not explicitly provided during instantiation
-        target_size = self.target_chunk_size or (settings.CHUNK_SIZE * 4) # approx 4 chars per token
-        overlap = self.chunk_overlap or (settings.CHUNK_OVERLAP * 4)
-
         chunks: List[TextChunk] = []
         chunk_idx = 0
-
-        for section in sections:
-            section_text = section.content.strip()
-            if not section_text:
-                continue
-
-            # Prepend section title to content to avoid separating headings from text
-            if section.section and not section_text.startswith(section.section):
-                section_text = f"{section.section}\n{section_text}"
-
-            # If the section is already within limits, keep it as a single chunk
-            if len(section_text) <= target_size:
-                chunks.append(self._create_chunk(
-                    content=section_text,
-                    section=section,
-                    document_id=document_id,
-                    course_id=course_id,
-                    filename=filename,
-                    chapter=chapter,
-                    chunk_idx=chunk_idx
-                ))
-                chunk_idx += 1
-                continue
-
-            # Otherwise, recursively split the section
-            split_texts = self._recursive_split(section_text, target_size, overlap)
-            
-            for split_text in split_texts:
-                chunks.append(self._create_chunk(
-                    content=split_text,
-                    section=section,
-                    document_id=document_id,
-                    course_id=course_id,
-                    filename=filename,
-                    chapter=chapter,
-                    chunk_idx=chunk_idx
-                ))
-                chunk_idx += 1
-
-        return chunks
-
-    def _create_chunk(
-        self,
-        content: str,
-        section: ParsedSection,
-        document_id: UUID,
-        course_id: str,
-        filename: str,
-        chapter: Optional[str],
-        chunk_idx: int
-    ) -> TextChunk:
-        return TextChunk(
-            chunk_id=self.generate_deterministic_id(document_id, chunk_idx),
-            document_id=document_id,
-            course_id=course_id,
-            filename=filename,
-            content=content,
-            page=section.page,
-            section=section.section,
-            chapter=chapter,
-            chunk_index=chunk_idx,
-            metadata=section.metadata
-        )
-
-    def _recursive_split(self, text: str, target_size: int, overlap: int) -> List[str]:
-        """
-        Recursively splits text by paragraphs, then sentences, then words.
-        """
-        separators = [
-            "\n\n",  # Paragraphs
-            "\n",    # Lines
-            ". ",    # Sentences
-            "! ",    # Exclamatory sentences
-            "? ",    # Questions
-            ", ",    # Clauses
-            " ",     # Words
-            ""       # Characters (fallback)
-        ]
         
-        return self._split_text(text, separators, target_size, overlap)
-
-    def _split_text(self, text: str, separators: List[str], target_size: int, overlap: int) -> List[str]:
-        final_chunks = []
-        separator = separators[-1]
-        new_separators = separators[:-1]
-
-        # Find the first separator that exists in the text
-        for i, sep in enumerate(separators):
-            if sep == "":
-                separator = sep
-                break
-            if sep in text:
-                separator = sep
-                new_separators = separators[i+1:]
-                break
-
-        # Split the text
-        if separator:
-            splits = text.split(separator)
-        else:
-            # Character fallback
-            splits = [text[i:i+target_size] for i in range(0, len(text), target_size)]
-
-        # Merge splits respecting target_size and overlap
-        current_chunk = ""
-        for split in splits:
-            split = split.strip()
-            if not split:
+        for section in sections:
+            content = section.content.strip()
+            if not content:
                 continue
                 
-            prospective_chunk = current_chunk + separator + split if current_chunk else split
+            prefix = self._build_contextual_prefix(section)
+            full_content = f"{prefix}{content}"
             
-            if len(prospective_chunk) <= target_size:
-                current_chunk = prospective_chunk
+            token_count = len(self.encoder.encode(full_content))
+            
+            text_blocks: List[str] = []
+            
+            if token_count <= self.chunk_size:
+                text_blocks.append(full_content)
             else:
-                if current_chunk:
-                    final_chunks.append(current_chunk)
-                    # Handle overlap by taking the tail of the current chunk
-                    if overlap > 0:
-                        overlap_text = current_chunk[-overlap:]
-                        current_chunk = overlap_text + separator + split
-                    else:
-                        current_chunk = split
+                # Strip prefix for structural splitting, re-add later
+                if section.content_type == "table":
+                    text_blocks = self._split_table(content)
                 else:
-                    # If the single split is still larger than target_size, recurse with a finer separator
-                    if new_separators:
-                        final_chunks.extend(self._split_text(split, new_separators, target_size, overlap))
-                    else:
-                        final_chunks.append(split) # Absolute fallback
-        
-        if current_chunk:
-            final_chunks.append(current_chunk)
-
-        return final_chunks
+                    text_blocks = self.recursive_splitter.split_text(content)
+                    
+            for block in text_blocks:
+                final_content = f"{prefix}{block}" if prefix else block
+                
+                is_valid, msg = validate_chunk(final_content, self.chunk_size, self.encoder)
+                if not is_valid:
+                    if "Empty" in msg:
+                        continue
+                    logger.warning(f"Chunk validation failed for doc {document_id} idx {chunk_idx}: {msg}")
+                    # Force split if still too large after recursive fallback
+                    if "Exceeds" in msg:
+                        final_content = final_content[:self.chunk_size * 4] # Hard char limit fallback
+                
+                chunk_id = generate_deterministic_id(document_id, chunk_idx, final_content)
+                
+                chunks.append(TextChunk(
+                    chunk_id=chunk_id,
+                    document_id=document_id,
+                    course_id=course_id,
+                    filename=filename,
+                    content=final_content,
+                    page=section.page,
+                    chapter=section.chapter,
+                    section=section.section,
+                    subsection=section.subsection,
+                    chunk_index=chunk_idx,
+                    content_type=section.content_type,
+                    metadata=section.metadata
+                ))
+                chunk_idx += 1
+                
+        return chunks
