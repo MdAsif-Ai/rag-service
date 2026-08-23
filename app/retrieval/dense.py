@@ -1,8 +1,7 @@
-# dense.py
-from typing import List
+from typing import List, Optional, Dict, Any
 from app.vectorstore.qdrant import QdrantRepository
-from .models import RetrievalCandidate, RetrievalFilters
-from .interfaces import IRetriever
+from app.retrieval.models import RetrievalCandidate, RetrievalFilters
+from app.retrieval.interfaces import IRetriever
 
 class DenseRetriever(IRetriever):
     def __init__(self, qdrant_repo: QdrantRepository):
@@ -15,5 +14,19 @@ class DenseRetriever(IRetriever):
             top_k=top_k,
             filters=filters.model_dump(exclude_none=True)
         )
-        # Map raw results to RetrievalCandidate (omitted mapping logic for brevity, assume it happens in qdrant_repo or here)
-        return [RetrievalCandidate(**r, dense_score=r.get("score")) for r in raw_results]
+        candidates = []
+        for r in raw_results:
+            candidates.append(RetrievalCandidate(
+                chunk_id=r.get("chunk_id", ""),
+                document_id=r.get("document_id", ""),
+                course_id=r.get("course_id", ""),
+                filename=r.get("filename", ""),
+                content=r.get("content", ""),
+                page=r.get("page"),
+                chapter=r.get("chapter"),
+                section=r.get("section"),
+                chunk_index=r.get("chunk_index", 0),
+                dense_score=r.get("score"),
+                metadata=r.get("metadata", {})
+            ))
+        return candidates

@@ -12,4 +12,5 @@ def test_unicode_normalization():
     # Full-width comma to standard comma (NFKC)
     section = ParsedSection(content="Hello，World")
     result = norm.normalize([section])
-    assert result[0].content == "Hello, World"
+    # NFKC converts ， to , but does not add a space
+    assert result[0].content == "Hello,World"

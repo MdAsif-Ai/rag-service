@@ -51,10 +51,17 @@ def test_html_loader_preserves_structure(tmp_path):
 
 @patch("app.ingestion.loaders.docx.Document")
 def test_docx_loader_metadata_mapping(mock_docx_class):
-    # Mock the python-docx Document object
     mock_doc = MagicMock()
-    mock_para1 = MagicMock(text="Heading 1", style=MagicMock(name="Heading 1"))
-    mock_para2 = MagicMock(text="Paragraph text", style=MagicMock(name="Normal"))
+    
+    # Properly mock paragraphs to simulate the loop in DOCXLoader
+    mock_para1 = MagicMock()
+    mock_para1.text = "Heading 1"
+    mock_para1.style.name = "Heading 1"
+    
+    mock_para2 = MagicMock()
+    mock_para2.text = "Paragraph text"
+    mock_para2.style.name = "Normal"
+    
     mock_doc.paragraphs = [mock_para1, mock_para2]
     mock_docx_class.return_value = mock_doc
     

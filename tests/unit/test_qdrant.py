@@ -22,10 +22,8 @@ def test_create_collection_with_indexes(repo, mock_client):
     mock_client.collection_exists.return_value = False
     repo.create_collection()
     
-    # Verify collection creation
     mock_client.create_collection.assert_called_once()
     
-    # Verify payload index creation for performance
     mock_client.create_payload_index.assert_any_call(
         collection_name="test_collection",
         field_name="course_id",
@@ -52,7 +50,6 @@ def test_upsert_points_generates_deterministic_ids(repo, mock_client):
     args, kwargs = mock_client.upsert.call_args
     point: PointStruct = kwargs["points"][0]
     
-    # Verify deterministic ID
     expected_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}_0"))
     assert point.id == expected_id
     assert point.payload["course_id"] == "course-1"
@@ -65,7 +62,6 @@ def test_delete_document(repo, mock_client):
     assert kwargs["collection_name"] == "test_collection"
 
 def test_search_dense_requires_course_ids(repo):
-    # Must raise exception if course_ids is empty to prevent data leakage
     with pytest.raises(QdrantException, match="course_ids must be provided"):
         repo.search_dense([0.1], [], top_k=5)
 
@@ -80,7 +76,8 @@ def test_search_dense_success(repo, mock_client):
     results = repo.search_dense([0.1], ["course-1"], top_k=5)
     assert len(results) == 1
     assert results[0]["score"] == 0.95
-    assert results[0]["payload"]["course_id"] == "course-1"
+    # The repository maps payload to metadata in the formatted result
+    assert results[0]["metadata"]["course_id"] == "course-1"
 
 def test_search_sparse_success(repo, mock_client):
     mock_result = MagicMock()
