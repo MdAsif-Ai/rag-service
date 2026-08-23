@@ -8,17 +8,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast dependency resolution
-RUN pip install --no-cache-dir uv
+# Install uv using the official standalone installer
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
 # Copy only dependency manifests first to leverage Docker layer caching
 COPY pyproject.toml uv.lock ./
 
-# Create a virtual environment and install dependencies
+# Create a virtual environment and install dependencies from lockfile
+# --no-install-project prevents it from failing because app source code isn't copied yet
 RUN uv venv /app/.venv && \
-    uv pip install --python /app/.venv/bin/python --frozen --no-dev .
+    uv sync --frozen --no-dev --no-install-project
 
 # ==========================================
 # Stage 2: Runtime
