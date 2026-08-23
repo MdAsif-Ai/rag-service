@@ -11,15 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast dependency resolution
 RUN pip install --no-cache-dir uv
 
-# Set working directory
 WORKDIR /app
 
 # Copy only dependency manifests first to leverage Docker layer caching
 COPY pyproject.toml uv.lock ./
 
 # Create a virtual environment and install dependencies
-# --frozen ensures deterministic installation from uv.lock
-# --no-dev excludes pytest, ruff, etc.
 RUN uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python --frozen --no-dev .
 
@@ -28,17 +25,15 @@ RUN uv venv /app/.venv && \
 # ==========================================
 FROM python:3.12-slim AS runtime
 
-# Install tini for proper signal handling (prevents zombie processes, 
-# ensures Celery workers shut down gracefully) and curl for healthchecks.
+# Install tini for proper signal handling (crucial for Celery) and curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user and group
+# Create a non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
-# Set working directory
 WORKDIR /app
 
 # Copy the virtual environment from the builder stage
@@ -48,15 +43,18 @@ COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Set HuggingFace cache directory to a path we can mount
+ENV HF_HOME=/app/hf_cache
 
 # Copy application code
 COPY --chown=appuser:appuser . /app
 
-# Switch to non-root user
+# Create cache directory and give ownership to appuser
+RUN mkdir -p /app/hf_cache && chown -R appuser:appuser /app/hf_cache
+
 USER appuser
 
-# Use tini as the entrypoint
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Default command (can be overridden by docker-compose)
+# Default command (overridden by docker-compose for the worker)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

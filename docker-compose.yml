@@ -1,9 +1,6 @@
 version: '3.8'
 
 services:
-  # ==========================================
-  # FastAPI Application
-  # ==========================================
   rag-api:
     build:
       context: .
@@ -13,23 +10,22 @@ services:
     env_file:
       - .env
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "8000:8000"
+    # Allows the container to reach 'localhost' on your host machine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Persist HuggingFace model downloads so it doesn't re-download on restart
+      - ./hf_cache:/app/hf_cache
     depends_on:
       - redis
     healthcheck:
-      # Liveness check only. Does not hit ML models or external DBs.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 15s
-    # No GPU access needed for the API routing layer
-    networks:
-      - rag-network
 
-  # ==========================================
-  # Celery Background Worker
-  # ==========================================
   rag-worker:
     build:
       context: .
@@ -38,50 +34,24 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # Override the default CMD to run Celery
+    # Override the default CMD to run Celery instead of Uvicorn
     command: ["celery", "-A", "app.jobs.celery", "worker", "--loglevel=info", "--concurrency=1"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Share the HuggingFace cache with the API container
+      - ./hf_cache:/app/hf_cache
     depends_on:
       - redis
-    healthcheck:
-      # Celery worker ping check
-      test: ["CMD-SHELL", "celery -A app.jobs.celery inspect ping -d celery@$$HOSTNAME || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    # GPU Support for ML Inference (BGE-M3, Reranker)
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    networks:
-      - rag-network
 
-  # ==========================================
-  # Redis (Message Broker & Result Backend)
-  # ==========================================
   redis:
     image: redis:7-alpine
     container_name: rag-redis
     restart: unless-stopped
-    # Enable basic persistence (RDB snapshots) so queued jobs survive restarts
-    command: redis-server --save 60 1 --loglevel warning
-    volumes:
-      - redis_data:/data
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
-    networks:
-      - rag-network
-
-networks:
-  rag-network:
-    driver: bridge
-
-volumes:
-  redis_data:
