@@ -1,3 +1,4 @@
+from typing import Any, Type
 from app.core.exceptions import UnsupportedFileException
 from .base import DocumentLoader, ParsedSection
 from .pdf import PDFLoader
@@ -8,7 +9,7 @@ from .html import HTMLLoader
 from .markdown import MarkdownLoader
 from .text import TextLoader
 
-LOADER_MAP = {
+LOADER_MAP: dict[str, Type[Any]] = {
     "pdf": PDFLoader,
     "docx": DOCXLoader,
     "pptx": PPTXLoader,
@@ -21,7 +22,6 @@ LOADER_MAP = {
 }
 
 def get_loader(file_type: str) -> DocumentLoader:
-    """Factory function to get the appropriate loader for a file type."""
     file_type = file_type.lower()
     loader_class = LOADER_MAP.get(file_type)
     if not loader_class:

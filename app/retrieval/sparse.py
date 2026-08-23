@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List
 from app.vectorstore.qdrant import QdrantRepository
 from app.retrieval.models import RetrievalCandidate, RetrievalFilters
 from app.retrieval.interfaces import IRetriever

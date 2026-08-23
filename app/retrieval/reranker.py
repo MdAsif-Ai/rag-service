@@ -14,15 +14,15 @@ class BGEReranker:
     The model is loaded once per worker process to maximize performance.
     """
     
-    _instance = None
+    _instance: Optional["BGEReranker"] = None
     _lock = threading.Lock()
+    _initialized: bool = False
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
                     cls._instance = super(BGEReranker, cls).__new__(cls)
-                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self, settings: Settings):

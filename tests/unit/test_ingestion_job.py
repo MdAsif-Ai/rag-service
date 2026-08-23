@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from celery.exceptions import Ignore
-
+import uuid
 from app.jobs.ingestion import ingest_document, TransientDBError
-from app.core.exceptions import DocumentProcessingException, QdrantException, UnsupportedFileException
+from app.core.exceptions import QdrantException, UnsupportedFileException
 
 @pytest.fixture
 def mock_dependencies():
@@ -59,84 +59,149 @@ def mock_dependencies():
 
 def test_successful_ingestion(mock_dependencies):
     mocks = mock_dependencies
+    document_id = "550e8400-e29b-41d4-a716-446655440000"
+
     mocks["supabase"].table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "doc1", "file_type": "pdf", "storage_path": "path", "filename": "f.pdf", "course_id": "c1"}
+        data={
+            "id": document_id,
+            "file_type": "pdf",
+            "storage_path": "path",
+            "filename": "f.pdf",
+            "course_id": "c1",
+        }
     )
     
-    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+    with patch.object(ingest_document, 'max_retries', 3), \
          patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
         
-        # Call the task directly. Celery will inject the bound 'self'.
-        ingest_document("doc1", "job1")
-        
+        # Use Celery's native request context to mock self.request
+        ingest_document.push_request(retries=0)
+        try:
+            ingest_document(document_id, "job1")
+        finally:
+            ingest_document.pop_request()
+            
         mock_retry.assert_not_called()
         mocks["storage"].download_file.assert_called_once_with("path")
         mocks["loader"]._safe_load.assert_called_once()
-        mocks["qdrant"].delete_document.assert_called_once_with("doc1")
+        mocks["qdrant"].delete_document.assert_called_once_with(
+            uuid.UUID(document_id)
+        )
         mocks["qdrant"].upsert_points.assert_called_once()
         mocks["status"].assert_any_call("job1", "COMPLETED", "DONE")
 
 def test_permanent_failure_unsupported_file(mock_dependencies):
     mocks = mock_dependencies
+    document_id = "550e8400-e29b-41d4-a716-446655440000"
+
     mocks["supabase"].table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "doc1", "file_type": "xyz", "storage_path": "path", "filename": "f.xyz", "course_id": "c1"}
+        data={
+            "id": document_id,
+            "file_type": "pdf",
+            "storage_path": "path",
+            "filename": "f.pdf",
+            "course_id": "c1",
+        }
     )
     
     mocks["loader"]._safe_load.side_effect = UnsupportedFileException("Unsupported file type: xyz")
     
-    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+    with patch.object(ingest_document, 'max_retries', 3), \
          patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
         
-        with pytest.raises(Ignore):
-            ingest_document("doc1", "job1")
+        ingest_document.push_request(retries=0)
+        try:
+            with pytest.raises(Ignore):
+                ingest_document(document_id, "job1")
+        finally:
+            ingest_document.pop_request()
             
         mock_retry.assert_not_called()
         mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Unsupported file type: xyz")
 
 def test_transient_failure_qdrant_down(mock_dependencies):
     mocks = mock_dependencies
+    document_id = "550e8400-e29b-41d4-a716-446655440000"
+
     mocks["supabase"].table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "doc1", "file_type": "pdf", "storage_path": "path", "filename": "f.pdf", "course_id": "c1"}
+        data={
+            "id": document_id,
+            "file_type": "pdf",
+            "storage_path": "path",
+            "filename": "f.pdf",
+            "course_id": "c1",
+        }
     )
     mocks["qdrant"].upsert_points.side_effect = QdrantException("Connection lost")
     
-    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+    with patch.object(ingest_document, 'max_retries', 3), \
          patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Retried"))) as mock_retry:
         
-        with pytest.raises(Exception, match="Retried"):
-            ingest_document("doc1", "job1")
+        ingest_document.push_request(retries=0)
+        try:
+            with pytest.raises(Exception, match="Retried"):
+                ingest_document(document_id, "job1")
+        finally:
+            ingest_document.pop_request()
             
         mock_retry.assert_called_once()
         mocks["status"].assert_any_call("job1", "PROCESSING", "RETRYING", error="Attempt 1 failed. Retrying...")
 
 def test_max_retries_exceeded_marks_failed(mock_dependencies):
     mocks = mock_dependencies
+    document_id = "550e8400-e29b-41d4-a716-446655440000"
+
     mocks["supabase"].table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "doc1", "file_type": "pdf", "storage_path": "path", "filename": "f.pdf", "course_id": "c1"}
+        data={
+            "id": document_id,
+            "file_type": "pdf",
+            "storage_path": "path",
+            "filename": "f.pdf",
+            "course_id": "c1",
+        }
     )
     mocks["qdrant"].upsert_points.side_effect = QdrantException("Connection lost")
     
-    with patch.object(ingest_document, 'request', MagicMock(retries=3)), \
+    with patch.object(ingest_document, 'max_retries', 3), \
          patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
         
-        with pytest.raises(Ignore):
-            ingest_document("doc1", "job1")
+        ingest_document.push_request(retries=3)
+        try:
+            with pytest.raises(Ignore):
+                ingest_document(document_id, "job1")
+        finally:
+            ingest_document.pop_request()
             
         mock_retry.assert_not_called()
         mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Max retries exceeded. Transient infrastructure error.")
 
 def test_job_status_update_failure_triggers_transient_retry(mock_dependencies):
     mocks = mock_dependencies
+    document_id = "550e8400-e29b-41d4-a716-446655440000"
+
     mocks["supabase"].table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
-        data={"id": "doc1", "file_type": "pdf", "storage_path": "path", "filename": "f.pdf", "course_id": "c1"}
+        data={
+            "id": document_id,
+            "file_type": "pdf",
+            "storage_path": "path",
+            "filename": "f.pdf",
+            "course_id": "c1",
+        }
     )
     
     mocks["status"].side_effect = TransientDBError("Supabase connection lost")
     
-    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+    with patch.object(ingest_document, 'max_retries', 3), \
          patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Retried"))) as mock_retry:
         
-        with pytest.raises(Exception, match="Retried"):
-            ingest_document("doc1", "job1")
+        ingest_document.push_request(retries=0)
+        try:
+            with pytest.raises(Exception, match="Retried"):
+                ingest_document(
+                document_id,
+                "job1",
+            )
+        finally:
+            ingest_document.pop_request()
             
         mock_retry.assert_called_once()

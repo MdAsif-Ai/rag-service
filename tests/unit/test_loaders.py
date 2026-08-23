@@ -1,9 +1,7 @@
 import pytest
-import os
 from unittest.mock import MagicMock, patch
 
 from app.ingestion.loaders import get_loader
-from app.ingestion.loaders.base import ParsedSection
 from app.ingestion.loaders.markdown import MarkdownLoader
 from app.ingestion.loaders.html import HTMLLoader
 from app.ingestion.loaders.text import TextLoader

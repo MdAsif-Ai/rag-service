@@ -1,5 +1,4 @@
 import pytest
-from app.retrieval.pipeline import RetrievalPipeline
 # This test would wire up real Qdrant client, real embedding model, etc.
 # It is intentionally left skeletal as it requires heavy ML models to run.
 

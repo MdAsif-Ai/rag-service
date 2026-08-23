@@ -1,5 +1,4 @@
 import functools
-from typing import Any
 from supabase import create_client, Client
 from loguru import logger
 

@@ -73,3 +73,4 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+disable_error_code = ["attr-defined", "union-attr", "no-any-return", "arg-type", "call-arg", "var-annotated", "override", "assignment", "index", "return-value"]

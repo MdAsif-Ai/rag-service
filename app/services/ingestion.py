@@ -5,7 +5,6 @@ from fastapi import UploadFile, HTTPException, status
 from loguru import logger
 
 from app.core.config import get_settings
-from app.core.exceptions import SupabaseException, RAGServiceException
 from app.db.supabase import get_supabase_client
 from app.storage.supabase import storage_service
 from app.schemas.ingestion import IngestionResponse

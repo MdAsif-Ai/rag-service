@@ -1,15 +1,19 @@
 from fastapi import APIRouter, Depends, status, HTTPException
 from loguru import logger
+from typing import Optional
 
 from app.core.security import verify_api_key
 from app.core.exceptions import RetrievalException, ValidationException
 from app.schemas.retrieval import RetrievalRequest, APIRetrievalResponse, RetrievedChunk
 from app.retrieval.pipeline import RetrievalPipeline, RetrievalResponse
+from app.retrieval.models import RetrievalFilters
+from app.core.state import app_state
 
 router = APIRouter()
 
 async def get_pipeline() -> RetrievalPipeline:
-    from app.main import app_state
+    if not app_state.pipeline:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Retrieval pipeline is not initialized.")
     return app_state.pipeline
 
 @router.post(
@@ -22,20 +26,21 @@ async def retrieve_context(
     request: RetrievalRequest,
     pipeline: RetrievalPipeline = Depends(get_pipeline)
 ):
-    """
-    Retrieves knowledge context from the vector database.
-    """
     logger.info(f"Retrieval request for courses: {request.course_ids}, top_k: {request.top_k}")
     
     try:
+        # Map API schema filters to internal model filters
+        internal_filters: Optional[RetrievalFilters] = None
+        if request.filters:
+            internal_filters = RetrievalFilters(**request.filters.model_dump())
+            
         pipeline_response: RetrievalResponse = await pipeline.retrieve(
             query=request.query,
             course_ids=request.course_ids,
             top_k=request.top_k,
-            filters=request.filters
+            filters=internal_filters
         )
         
-        # Explicit mapping from internal RetrievalCandidate to public RetrievedChunk
         results = [
             RetrievedChunk(
                 chunk_id=c.chunk_id,
@@ -66,13 +71,7 @@ async def retrieve_context(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.message)
     except RetrievalException as e:
         logger.error(f"Retrieval pipeline failed: {e.detail}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-            detail="Retrieval service temporarily unavailable."
-        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Retrieval service temporarily unavailable.")
     except Exception as e:
         logger.error(f"Unexpected error during retrieval: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="An unexpected error occurred."
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")

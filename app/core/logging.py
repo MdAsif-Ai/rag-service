@@ -1,12 +1,11 @@
 import sys
 import logging
 import contextvars
-import json
 import re
-from typing import Any, Dict, Callable, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
-from .config import Settings, get_settings
+from .config import get_settings
 
 # Context variables for tracking request and job IDs across async flows
 request_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("request_id", default=None)

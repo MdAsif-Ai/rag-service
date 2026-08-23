@@ -6,7 +6,6 @@ class QueryEmbeddingResult(BaseModel):
     sparse_vector: Dict[int, float]
 
 class RetrievalFilters(BaseModel):
-    """Validated internal filter model to prevent arbitrary Qdrant filters."""
     document_ids: Optional[List[str]] = None
     chapters: Optional[List[str]] = None
     sections: Optional[List[str]] = None
@@ -23,10 +22,10 @@ class RetrievalCandidate(BaseModel):
     chapter: Optional[str] = None
     section: Optional[str] = None
     chunk_index: int
-    dense_score: Optional[float] = None
+    dense_score: Optional[float] = None 
     sparse_score: Optional[float] = None
-    fusion_score: Optional[float] = None
-    rerank_score: Optional[float] = None
+    fusion_score: float = 0.0
+    rerank_score: float = 0.0
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class RetrievalMetrics(BaseModel):

@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Optional
-from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 class RetrievalFilters(BaseModel):
     """Validated internal filter model to prevent arbitrary Qdrant filters."""

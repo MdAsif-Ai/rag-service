@@ -1,8 +1,8 @@
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 from app.retrieval.pipeline import RetrievalPipeline
-from app.retrieval.models import RetrievalCandidate, RetrievalFilters, QueryEmbeddingResult, RetrievalMetrics
+from app.retrieval.models import RetrievalCandidate, QueryEmbeddingResult
 from app.core.exceptions import RetrievalException, ValidationException
 
 @pytest.fixture

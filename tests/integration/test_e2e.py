@@ -1,7 +1,4 @@
-import os
 import pytest
-from uuid import uuid4
-import asyncio
 
 # Mark all tests in this file as E2E
 pytestmark = pytest.mark.e2e
@@ -12,9 +9,6 @@ async def test_full_ingestion_and_retrieval_cycle():
     Full E2E test:
     Document -> Storage -> Celery Job -> Parser -> Chunker -> Embedding -> Qdrant -> Retrieval
     """
-    from app.services.ingestion import IngestionService
-    from app.services.jobs import JobService
-    from app.retrieval.pipeline import RetrievalPipeline
     # ... wire up real dependencies ...
     
     # 1. Create mock UploadFile

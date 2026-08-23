@@ -1,6 +1,6 @@
 import pytest
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from qdrant_client.http.models import PointStruct
 
 from app.vectorstore.qdrant import QdrantRepository
@@ -71,12 +71,19 @@ def test_search_dense_success(repo, mock_client):
     mock_result.score = 0.95
     mock_result.payload = {"document_id": "doc-1", "course_id": "course-1", "content": "text"}
     
-    mock_client.search.return_value = [mock_result]
+    mock_response = MagicMock()
+    mock_response.points = [mock_result]
+
+    mock_client.query_points.return_value = mock_response
     
-    results = repo.search_dense([0.1], ["course-1"], top_k=5)
+    results = repo.search_dense(
+        [0.1],
+        ["course-1"],
+        top_k=5,
+    )
+
     assert len(results) == 1
     assert results[0]["score"] == 0.95
-    # The repository maps payload to metadata in the formatted result
     assert results[0]["metadata"]["course_id"] == "course-1"
 
 def test_search_sparse_success(repo, mock_client):
@@ -85,8 +92,16 @@ def test_search_sparse_success(repo, mock_client):
     mock_result.score = 12.5
     mock_result.payload = {"document_id": "doc-2", "course_id": "course-1", "content": "text"}
     
-    mock_client.search.return_value = [mock_result]
-    
-    results = repo.search_sparse({1: 0.5}, ["course-1"], top_k=5)
+    mock_response = MagicMock()
+    mock_response.points = [mock_result]
+
+    mock_client.query_points.return_value = mock_response
+        
+    results = repo.search_sparse(
+        {1: 0.5},
+        ["course-1"],
+        top_k=5,
+    )
+
     assert len(results) == 1
     assert results[0]["score"] == 12.5

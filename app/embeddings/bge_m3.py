@@ -1,6 +1,6 @@
 import functools
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict,Optional
 
 from loguru import logger
 from pydantic import BaseModel
@@ -22,15 +22,16 @@ class BGEEmbeddingService:
     The model is loaded once per worker process to maximize performance.
     """
     
-    _instance = None
+class BGEEmbeddingService:
+    _instance: Optional["BGEEmbeddingService"] = None
     _lock = threading.Lock()
+    _initialized: bool = False
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
                     cls._instance = super(BGEEmbeddingService, cls).__new__(cls)
-                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self, settings: Settings):
@@ -108,11 +109,11 @@ class BGEEmbeddingService:
             lexical_weights = embeddings["lexical_weights"]
             
             for i in range(len(texts)):
-                # Use list() instead of .tolist() to support both NumPy arrays and plain lists
                 dense = list(dense_vecs[i])
                 
                 sparse = {}
-                if i in lexical_weights:
+                # BGE-M3 returns lexical_weights as a list of dictionaries
+                if isinstance(lexical_weights, list) and i < len(lexical_weights) and lexical_weights[i]:
                     sparse = {int(k): float(v) for k, v in lexical_weights[i].items()}
                 
                 results.append(EmbeddingResult(
@@ -143,12 +144,12 @@ class BGEEmbeddingService:
                 return_colbert_vecs=False
             )
             
-            # Use list() instead of .tolist() to support both NumPy arrays and plain lists
             dense = list(embeddings["dense_vecs"][0])
             lexical_weights = embeddings["lexical_weights"]
             
             sparse = {}
-            if 0 in lexical_weights:
+            # BGE-M3 returns lexical_weights as a list of dictionaries
+            if isinstance(lexical_weights, list) and len(lexical_weights) > 0 and lexical_weights[0]:
                 sparse = {int(k): float(v) for k, v in lexical_weights[0].items()}
                 
             return EmbeddingResult(
