@@ -1,19 +1,21 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.exceptions import DocumentProcessingException
 
 
 class ParsedSection(BaseModel):
-    """Normalized internal representation of a document chunk before embedding."""
+    """Normalized internal representation of a document block from a loader."""
     content: str
     page: Optional[int] = None
     section: Optional[str] = None
-    metadata: Dict[str, Any] = {}
+    chapter: Optional[str] = None
+    content_type: str = "text"  # text, table, code, list
+    source_type: str = "unknown"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class DocumentLoader(ABC):
@@ -30,7 +32,10 @@ class DocumentLoader(ABC):
     def _safe_load(self, file_path: str) -> List[ParsedSection]:
         """Wrapper to catch library-specific exceptions and normalize them."""
         try:
-            return self.load(file_path)
+            sections = self.load(file_path)
+            if not sections:
+                raise DocumentProcessingException("No content extracted from document.")
+            return sections
         except DocumentProcessingException:
             raise
         except Exception as e:

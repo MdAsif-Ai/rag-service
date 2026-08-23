@@ -8,7 +8,7 @@ class RecursiveTokenSplitter:
     def __init__(self, chunk_size: int, chunk_overlap: int, tokenizer_name: str = "cl100k_base"):
         self.encoder = get_token_encoder(tokenizer_name)
         
-        # Custom separators prioritizing structural boundaries
+        # Prioritize structural boundaries
         separators = [
             "\n\n",  # Paragraphs
             "\n",    # Lines

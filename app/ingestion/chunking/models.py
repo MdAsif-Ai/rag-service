@@ -6,10 +6,10 @@ class ParsedSection(BaseModel):
     """Normalized internal representation of a document block from a loader."""
     content: str
     page: Optional[int] = None
-    chapter: Optional[str] = None
     section: Optional[str] = None
-    subsection: Optional[str] = None
-    content_type: str = "text"  # text, table, code, list
+    chapter: Optional[str] = None
+    content_type: str = "text"
+    source_type: str = "unknown"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class TextChunk(BaseModel):
@@ -22,7 +22,7 @@ class TextChunk(BaseModel):
     page: Optional[int] = None
     chapter: Optional[str] = None
     section: Optional[str] = None
-    subsection: Optional[str] = None
     chunk_index: int
     content_type: str = "text"
+    source_type: str = "unknown"
     metadata: Dict[str, Any] = Field(default_factory=dict)

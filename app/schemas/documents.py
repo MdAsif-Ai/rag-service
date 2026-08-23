@@ -14,7 +14,7 @@ class DocumentStatus(str, Enum):
     DELETED = "DELETED"
 
 class DocumentMetadata(BaseModel):
-    document_id: UUID = Field(..., alias="id")
+    document_id: UUID
     course_id: str
     filename: str
     file_type: str

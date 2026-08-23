@@ -31,13 +31,13 @@ class RetrievalCandidate(BaseModel):
 
 class RetrievalMetrics(BaseModel):
     query_hash: str
-    embedding_latency_ms: float
-    dense_latency_ms: float
-    sparse_latency_ms: float
-    fusion_latency_ms: float
-    reranking_latency_ms: float
-    total_latency_ms: float
-    dense_candidates: int
-    sparse_candidates: int
-    fused_candidates: int
-    final_candidates: int
+    embedding_latency_ms: float = 0.0
+    dense_latency_ms: float = 0.0
+    sparse_latency_ms: float = 0.0
+    fusion_latency_ms: float = 0.0
+    reranking_latency_ms: float = 0.0
+    total_latency_ms: float = 0.0
+    dense_candidates: int = 0
+    sparse_candidates: int = 0
+    fused_candidates: int = 0
+    final_candidates: int = 0

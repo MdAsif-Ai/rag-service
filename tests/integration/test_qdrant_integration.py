@@ -1,13 +1,13 @@
 import pytest
 from uuid import uuid4
-from app.vectorstore.qdrant import QdrantRepository
 from qdrant_client import QdrantClient
+
+from app.vectorstore.qdrant import QdrantRepository
 
 @pytest.fixture(scope="module")
 def qdrant_repo():
     client = QdrantClient(url="http://localhost:6333", api_key=None)
     repo = QdrantRepository(client=client, collection_name="test_collection")
-    # Create collection if it doesn't exist
     if not repo.collection_exists():
         repo.create_collection()
     yield repo
@@ -30,6 +30,10 @@ def test_qdrant_upsert_and_search(qdrant_repo):
     results = qdrant_repo.search_dense([0.1] * 1024, ["course-int"], top_k=1)
     assert len(results) == 1
     assert results[0]["payload"]["document_id"] == str(doc_id)
+    
+    # Sparse search
+    results = qdrant_repo.search_sparse({1: 0.5}, ["course-int"], top_k=1)
+    assert len(results) == 1
     
     # Cleanup doc
     qdrant_repo.delete_document(doc_id)

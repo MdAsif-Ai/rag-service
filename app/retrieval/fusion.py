@@ -13,6 +13,12 @@ class RRFFusion:
     """
 
     def __init__(self, k: int = 60, dense_weight: float = 1.0, sparse_weight: float = 1.0):
+        """
+        Args:
+            k: The RRF k parameter (default 60). A constant that dampens the rank influence.
+            dense_weight: Weight multiplier for dense retrieval ranks.
+            sparse_weight: Weight multiplier for sparse retrieval ranks.
+        """
         self.k = k
         self.dense_weight = dense_weight
         self.sparse_weight = sparse_weight
@@ -45,6 +51,7 @@ class RRFFusion:
                     raise ValidationException("Candidate missing chunk_id during fusion")
                 
                 cid = candidate.chunk_id
+                # RRF formula: weight * (1 / (k + rank + 1))  [rank is 0-indexed]
                 rank_score = weight * (1.0 / (self.k + rank + 1))
                 
                 if cid not in fused_map:
@@ -61,7 +68,7 @@ class RRFFusion:
 
         fused_list = list(fused_map.values())
         
-        # Deterministic sorting: fusion_score DESC, then chunk_id ASC
+        # Deterministic sorting: fusion_score DESC, then chunk_id ASC for stable tie-breaking
         fused_list.sort(key=lambda x: (-x.fusion_score, x.chunk_id))
         
         if top_k is not None:

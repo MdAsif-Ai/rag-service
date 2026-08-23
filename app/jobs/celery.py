@@ -26,15 +26,18 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     
     # Timeouts (Seconds) - prevent stuck workers
-    task_time_limit=1800,      # 30 minutes hard limit
-    task_soft_time_limit=1500, # 25 minutes soft limit
+    task_time_limit=settings.CELERY_TASK_TIME_LIMIT,
+    task_soft_time_limit=settings.CELERY_TASK_SOFT_TIME_LIMIT,
+    
+    # Startup retry logic
+    broker_connection_retry_on_startup=True,
     
     # Retries
-    task_default_max_retries=3,
-    task_default_retry_delay=60, # 1 minute exponential backoff base
+    task_default_max_retries=settings.CELERY_MAX_RETRIES,
+    task_default_retry_delay=settings.CELERY_RETRY_DELAY,
 )
 
-@celery_app.task
+@celery_app.task(name="heartbeat")
 def heartbeat():
     """Simple task to verify worker connectivity."""
     logger.info("Celery worker heartbeat received.")

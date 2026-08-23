@@ -50,6 +50,15 @@ def test_overlapping_results(fusion_service):
     assert result[0].dense_score == 0.9
     assert result[0].sparse_score == 10.5
 
+def test_duplicate_chunks(fusion_service):
+    # Simulate a duplicate within the SAME list (e.g., dense search returning same chunk twice)
+    dense = [make_candidate("c1", dense_score=0.9), make_candidate("c1", dense_score=0.9)]
+    sparse = []
+    
+    result = fusion_service.fuse(dense, sparse)
+    assert len(result) == 1
+    assert result[0].chunk_id == "c1"
+
 def test_rrf_score_calculation(fusion_service):
     # Rank 0 in dense: 1.0 / (60 + 0 + 1) = 1/61
     # Rank 0 in sparse: 1.0 / (60 + 0 + 1) = 1/61
@@ -70,7 +79,7 @@ def test_weighted_rrf():
     expected_score = (2.0 * (1.0 / 61)) + (1.0 * (1.0 / 61))
     assert abs(result[0].fusion_score - expected_score) < 1e-9
 
-def test_deterministic_ordering(fusion_service):
+def test_ties_and_deterministic_ordering(fusion_service):
     # Two candidates with identical RRF scores should break ties by chunk_id ASC
     c1 = make_candidate("chunk_b")
     c2 = make_candidate("chunk_a")

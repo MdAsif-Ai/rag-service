@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 from .jobs import JobStatus
 
 
+
+
 class IngestionMetadata(BaseModel):
     """
     Metadata accompanying a file upload.

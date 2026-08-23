@@ -1,5 +1,5 @@
 import functools
-import time
+import threading
 from typing import List, Optional
 from loguru import logger
 
@@ -13,14 +13,38 @@ class BGEReranker:
     Production reranking service using BGE-reranker-v2-m3.
     The model is loaded once per worker process to maximize performance.
     """
+    
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(BGEReranker, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self, settings: Settings):
+        if self._initialized:
+            return
+            
+        with BGEReranker._lock:
+            if self._initialized:
+                return
+                
+            self.settings = settings
+            self.model = None
+            self._initialize_model()
+            self._initialized = True
+
+    def _initialize_model(self) -> None:
+        """Lazy initialization of the BGE Reranker model."""
         try:
             from FlagEmbedding import FlagReranker
             
-            self.settings = settings
-            model_name = settings.RERANKER_MODEL
-            device = settings.RERANKER_DEVICE
+            model_name = self.settings.RERANKER_MODEL
+            device = self.settings.RERANKER_DEVICE
             
             # use_fp16 improves performance significantly on GPU. Fallback to False on CPU.
             use_fp16 = (device == "cuda")
@@ -41,9 +65,20 @@ class BGEReranker:
                 detail="Run: pip install FlagEmbedding torch"
             )
         except Exception as e:
-            # Handle CUDA out of memory or model download failures
             logger.error(f"Failed to load BGE Reranker: {e}")
-            raise RetrievalException("Failed to initialize BGE Reranker model.", detail=str(e))
+            
+            # CPU Fallback for development if GPU fails
+            if device == "cuda":
+                logger.warning("GPU load failed. Falling back to CPU.")
+                try:
+                    from FlagEmbedding import FlagReranker
+                    self.model = FlagReranker(model_name, use_fp16=False, device="cpu")
+                    self.settings.RERANKER_DEVICE = "cpu" # Update active setting
+                    logger.info("BGE Reranker loaded successfully on CPU fallback.")
+                except Exception as fallback_e:
+                    raise RetrievalException("Failed to load BGE Reranker on both GPU and CPU.", detail=str(fallback_e))
+            else:
+                raise RetrievalException("Failed to initialize BGE Reranker model.", detail=str(e))
 
     def rerank(
         self, 
@@ -74,8 +109,6 @@ class BGEReranker:
         
         # 3. Execute model inference
         try:
-            start_time = time.time()
-            
             # FlagReranker handles batching internally via the batch_size parameter
             scores = self.model.compute_score(
                 pairs, 
@@ -87,9 +120,6 @@ class BGEReranker:
             if not isinstance(scores, list):
                 scores = [scores]
                 
-            latency_ms = (time.time() - start_time) * 1000
-            logger.info(f"Reranked {len(pairs)} pairs in {latency_ms:.2f}ms.")
-            
         except Exception as e:
             logger.error(f"Reranker model inference failed: {e}")
             raise RetrievalException("Reranker model inference failed.", detail=str(e))

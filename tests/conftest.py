@@ -2,6 +2,12 @@ import os
 import sys
 import pytest
 from unittest.mock import MagicMock
+# Set required env vars for Pydantic Settings before app imports
+os.environ.setdefault("RAG_SERVICE_API_KEY", "test-api-key")
+os.environ.setdefault("SUPABASE_URL", "http://localhost:54321")
+os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-supabase-key")
+os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
+os.environ.setdefault("QDRANT_API_KEY", "test-qdrant-key")
 
 # Ensure app is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

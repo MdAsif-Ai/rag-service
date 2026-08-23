@@ -10,6 +10,7 @@ router = APIRouter()
 @router.get(
     "/jobs/{job_id}", 
     response_model=JobMetadata,
+    status_code=status.HTTP_200_OK,
     dependencies=[Depends(verify_api_key)]
 )
 async def get_job_status(job_id: UUID):

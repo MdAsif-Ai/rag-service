@@ -27,7 +27,9 @@ async def ingest_document(
     """
     logger.info(f"Received ingestion request for course: {course_id}, file: {file.filename}")
     
-    # Delegate entirely to the service layer
+    # Delegate entirely to the service layer. 
+    # The service handles validation, storage, DB records, and Celery queueing.
+    # FastAPI's exception handlers in main.py will catch any HTTPExceptions raised.
     return await IngestionService.process_upload(
         file=file,
         course_id=course_id,

@@ -101,4 +101,4 @@ def setup_logging() -> None:
         enqueue=True,       # Thread-safe logging, non-blocking for FastAPI/Celery
     )
 
-    logger.info("Logging system initialized.", service_name=settings.APP_NAME, env=settings.APP_ENV)
+    logger.info("Logging system initialized.", service_name=settings.APP_NAME, env=settings.APP_ENV)    

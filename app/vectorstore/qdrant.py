@@ -1,15 +1,15 @@
 import uuid
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from qdrant_client import QdrantClient
-from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.http.models import (
     Distance,
     FieldCondition,
     Filter,
     MatchAny,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     ScalarQuantization,
     ScalarQuantizationConfig,
@@ -25,8 +25,8 @@ from app.core.exceptions import QdrantException
 
 class QdrantRepository:
     """
-    Production-quality Qdrant repository for LMS knowledge base.
-    Supports BGE-M3 dense (1024) and sparse vectors.
+    Production Qdrant repository for LMS knowledge base.
+    Enforces strict course_id isolation and supports BGE-M3 dense/sparse vectors.
     """
 
     def __init__(self, client: QdrantClient, collection_name: str):
@@ -34,7 +34,6 @@ class QdrantRepository:
         self.collection_name = collection_name
 
     def health_check(self) -> bool:
-        """Checks if Qdrant is reachable and responding."""
         try:
             return self.client.get_collection(self.collection_name) is not None
         except Exception as e:
@@ -42,7 +41,6 @@ class QdrantRepository:
             return False
 
     def collection_exists(self) -> bool:
-        """Checks if the configured collection exists."""
         try:
             return self.client.collection_exists(self.collection_name)
         except Exception as e:
@@ -51,7 +49,7 @@ class QdrantRepository:
     def create_collection(self) -> None:
         """
         Creates the Qdrant collection with BGE-M3 compatible configuration.
-        BGE-M3 produces 1024-dimensional dense vectors and sparse lexical vectors.
+        Creates payload indexes for course_id and document_id to ensure fast filtering.
         """
         if self.collection_exists():
             logger.info(f"Collection '{self.collection_name}' already exists.")
@@ -75,7 +73,20 @@ class QdrantRepository:
                     )
                 ),
             )
-            logger.info("Collection created successfully.")
+            
+            # Create payload indexes for fast filtering
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="course_id",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="document_id",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            
+            logger.info("Collection and indexes created successfully.")
         except Exception as e:
             raise QdrantException("Failed to create Qdrant collection.", detail=str(e))
 
@@ -85,9 +96,8 @@ class QdrantRepository:
 
     def upsert_points(self, document_id: uuid.UUID, course_id: str, filename: str, chunks: List[Dict[str, Any]]) -> None:
         """
-        Upserts a list of processed document chunks into Qdrant.
-        Each chunk dict must contain: content, chunk_index, dense_vector, sparse_vector, 
-        and optionally: page, section, checksum.
+        Batch upserts document chunks into Qdrant.
+        Enforces required metadata fields.
         """
         if not chunks:
             logger.warning(f"No chunks provided for upsertion for document {document_id}")
@@ -107,6 +117,7 @@ class QdrantRepository:
                 "section": chunk.get("section"),
                 "chunk_index": chunk_idx,
                 "checksum": chunk.get("checksum"),
+                "source_type": chunk.get("source_type", "unknown")
             }
             
             vector_data = {
@@ -117,6 +128,7 @@ class QdrantRepository:
             points.append(PointStruct(id=point_id, vector=vector_data, payload=payload))
 
         try:
+            # Qdrant client handles batching internally for large lists
             self.client.upsert(collection_name=self.collection_name, points=points)
             logger.info(f"Successfully upserted {len(points)} points for document {document_id}")
         except Exception as e:
@@ -125,7 +137,6 @@ class QdrantRepository:
     def delete_document(self, document_id: uuid.UUID) -> None:
         """
         Deletes all vectors associated with a given document_id.
-        Used internally when reindexing a document.
         """
         try:
             self.client.delete(
@@ -144,7 +155,13 @@ class QdrantRepository:
             raise QdrantException(f"Failed to delete points for document {document_id}.", detail=str(e))
 
     def _build_filter(self, course_ids: List[str], filters: Optional[Dict[str, Any]] = None) -> Filter:
-        """Builds a Qdrant filter object for retrieval."""
+        """
+        Builds a Qdrant filter object. 
+        STRICT REQUIREMENT: course_ids cannot be empty to prevent cross-course data leakage.
+        """
+        if not course_ids:
+            raise QdrantException("course_ids must be provided to prevent cross-course retrieval.")
+
         conditions = [
             FieldCondition(key="course_id", match=MatchAny(any=course_ids))
         ]
@@ -159,9 +176,7 @@ class QdrantRepository:
         return Filter(must=conditions)
 
     def search_dense(self, query_vector: List[float], course_ids: List[str], top_k: int, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Performs a dense vector search.
-        """
+        """Performs a dense vector search with strict course_id filtering."""
         qdrant_filter = self._build_filter(course_ids, filters)
         try:
             results = self.client.search(
@@ -176,9 +191,7 @@ class QdrantRepository:
             raise QdrantException("Dense vector search failed.", detail=str(e))
 
     def search_sparse(self, sparse_vector: Dict[int, float], course_ids: List[str], top_k: int, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Performs a sparse vector (lexical) search.
-        """
+        """Performs a sparse vector (lexical) search with strict course_id filtering."""
         qdrant_filter = self._build_filter(course_ids, filters)
         try:
             results = self.client.search(
@@ -210,21 +223,15 @@ class QdrantRepository:
         }
 
 
-
-# --- Dependency Injection / Factory ---
-
 def get_qdrant_repository() -> QdrantRepository:
-    """
-    Factory function to create a QdrantRepository instance.
-    Reads configuration from application settings.
-    """
+    """Factory function with explicit timeout configuration."""
     settings = get_settings()
     
     try:
-        # Use prefer_grpc=True for faster communication if port 6334 is open
         client = QdrantClient(
             url=settings.QDRANT_URL,
             api_key=settings.QDRANT_API_KEY.get_secret_value(),
+            timeout=settings.QDRANT_TIMEOUT,
             prefer_grpc=True if settings.QDRANT_URL.startswith("http") else False
         )
         return QdrantRepository(client=client, collection_name=settings.QDRANT_COLLECTION)

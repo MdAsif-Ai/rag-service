@@ -27,6 +27,8 @@ def mock_flag_reranker():
 
 @pytest.fixture
 def reranker_service(mock_settings, mock_flag_reranker):
+    # Reset singleton for test isolation
+    BGEReranker._instance = None
     return BGEReranker(mock_settings)
 
 def make_candidate(cid, content="test content"):

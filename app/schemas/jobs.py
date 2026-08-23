@@ -21,14 +21,13 @@ class JobStage(str, Enum):
     FAILED = "FAILED"
 
 class JobMetadata(BaseModel):
-    # Maps the database 'id' column to the API response 'job_id'
-    job_id: UUID = Field(..., alias="id")
+    job_id: UUID
     document_id: UUID
     status: JobStatus
     stage: Optional[JobStage] = None
     attempts: int = 0
-    progress: Optional[float] = Field(default=None, description="Progress percentage (0.0 to 1.0) if available")
-    error: Optional[str] = Field(default=None, description="Safe error message if the job failed")
+    progress: Optional[float] = None
+    error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None

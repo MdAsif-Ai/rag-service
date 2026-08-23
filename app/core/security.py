@@ -1,8 +1,9 @@
 import secrets
-from typing import Optional, bool
+from typing import Optional
 
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import APIKeyHeader
+from loguru import logger
 
 from .config import Settings, get_settings
 
@@ -29,8 +30,10 @@ async def verify_api_key(
     configured_key = settings.RAG_SERVICE_API_KEY.get_secret_value()
 
     if not secrets.compare_digest(api_key_header, configured_key):
+        # Log the attempt without exposing the key used
+        logger.warning("Invalid API Key attempt received.")
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API Key.",
         )
 
@@ -44,11 +47,12 @@ async def verify_health_api_key(
     """
     FastAPI dependency specifically for health endpoints.
     If HEALTH_CHECK_API_KEY is configured, it requires that key.
-    If it is NOT configured, the endpoint is open for infrastructure load balancers
+    If it is NOT configured (empty), the endpoint is open for infrastructure load balancers
     and Docker healthchecks to access without authentication.
     """
     # If no health key is configured in the environment, allow access
-    if not settings.HEALTH_CHECK_API_KEY:
+    health_key = settings.HEALTH_CHECK_API_KEY.get_secret_value()
+    if not health_key:
         return True
 
     # If a health key IS configured, enforce it
@@ -58,11 +62,10 @@ async def verify_health_api_key(
             detail="Missing Health API Key.",
         )
 
-    configured_health_key = settings.HEALTH_CHECK_API_KEY.get_secret_value()
-
-    if not secrets.compare_digest(api_key_header, configured_health_key):
+    if not secrets.compare_digest(api_key_header, health_key):
+        logger.warning("Invalid Health API Key attempt received.")
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Health API Key.",
         )
 

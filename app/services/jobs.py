@@ -11,14 +11,15 @@ class JobService:
         supabase = get_supabase_client()
         
         try:
-            # Query the ingestion_jobs table
             res = supabase.table("ingestion_jobs").select("*").eq("id", str(job_id)).limit(1).execute()
             
             if not res.data:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
                 
-            # Parse into Pydantic model (alias maps 'id' to 'job_id')
             job_data = res.data[0]
+            # Explicit mapping for public contract
+            job_data["job_id"] = job_data.pop("id")
+            
             return JobMetadata(**job_data)
             
         except HTTPException:

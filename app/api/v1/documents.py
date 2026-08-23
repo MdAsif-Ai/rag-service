@@ -11,6 +11,7 @@ router = APIRouter()
 @router.get(
     "/documents/{document_id}", 
     response_model=DocumentDetail,
+    status_code=status.HTTP_200_OK,
     dependencies=[Depends(verify_api_key)]
 )
 async def get_document(document_id: UUID):

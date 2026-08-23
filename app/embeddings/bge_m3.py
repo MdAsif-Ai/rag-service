@@ -1,10 +1,18 @@
 import functools
-from typing import Any, Dict, List
+import threading
+from typing import List, Dict, Any, Optional
 
 from loguru import logger
+from pydantic import BaseModel
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import EmbeddingException
+
+
+class EmbeddingResult(BaseModel):
+    """Typed return model for embedding results."""
+    dense_vector: List[float]
+    sparse_vector: Dict[int, float]
 
 
 class BGEEmbeddingService:
@@ -13,15 +21,39 @@ class BGEEmbeddingService:
     Supports dense and sparse(lexical) vector generation.
     The model is loaded once per worker process to maximize performance.
     """
+    
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(BGEEmbeddingService, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self, settings: Settings):
-        try:
-            # Imported here to prevent loading PyTorch globally at module import time
-            from FlagEmbedding import BGEM3FlagModel
-
+        # Prevent re-initialization in singleton pattern
+        if self._initialized:
+            return
+            
+        with BGEEmbeddingService._lock:
+            if self._initialized:
+                return
+                
             self.settings = settings
-            model_name = settings.EMBEDDING_MODEL
-            device = settings.EMBEDDING_DEVICE
+            self.model = None
+            self._initialize_model()
+            self._initialized = True
+
+    def _initialize_model(self) -> None:
+        """Lazy initialization of the BGE-M3 model."""
+        try:
+            from FlagEmbedding import BGEM3FlagModel
+            
+            model_name = self.settings.EMBEDDING_MODEL
+            device = self.settings.EMBEDDING_DEVICE
             
             # use_fp16 improves performance on GPU. Fallback to False on CPU.
             use_fp16 = (device == "cuda")
@@ -42,7 +74,6 @@ class BGEEmbeddingService:
                 detail="Run: pip install FlagEmbedding torch"
             )
         except Exception as e:
-            # Handle CUDA out of memory or model download failures
             logger.error(f"Failed to load BGE-M3 model: {e}")
             
             # CPU Fallback for development if GPU fails
@@ -58,20 +89,22 @@ class BGEEmbeddingService:
             else:
                 raise EmbeddingException("Failed to initialize BGE-M3 model.", detail=str(e))
 
-    def embed_documents(self, texts: List[str]) -> List[Dict[str, Any]]:
+    def embed_documents(self, texts: List[str]) -> List[EmbeddingResult]:
         """
         Embeds a list of document chunks.
-        Returns a list of dictionaries containing 'dense' and 'sparse' vectors.
+        Returns a list of typed EmbeddingResult objects.
         """
         if not texts:
             return []
 
+        if not self.model:
+            raise EmbeddingException("Embedding model is not initialized.")
+
         try:
             # BGE-M3 encode returns a dict with 'dense_vecs' and 'lexical_weights'
-            # normalize_embeddings=True is crucial for Cosine similarity in Qdrant
             embeddings = self.model.encode(
                 texts,
-                batch_size=12, # Adjust based on GPU VRAM (12 is safe for 8GB-24GB)
+                batch_size=self.settings.RERANK_BATCH_SIZE, # Reusing batch size setting
                 max_length=8192,
                 return_dense=True,
                 return_sparse=True,
@@ -92,10 +125,10 @@ class BGEEmbeddingService:
                 if i in lexical_weights:
                     sparse = {int(k): float(v) for k, v in lexical_weights[i].items()}
                 
-                results.append({
-                    "dense_vector": dense,
-                    "sparse_vector": sparse
-                })
+                results.append(EmbeddingResult(
+                    dense_vector=dense,
+                    sparse_vector=sparse
+                ))
                 
             return results
             
@@ -103,11 +136,17 @@ class BGEEmbeddingService:
             logger.error(f"Failed to generate document embeddings: {e}")
             raise EmbeddingException("Failed to generate document embeddings.", detail=str(e))
 
-    def embed_query(self, text: str) -> Dict[str, Any]:
+    def embed_query(self, text: str) -> EmbeddingResult:
         """
         Embeds a single search query.
-        Returns a dictionary containing 'dense_vector' and 'sparse_vector'.
+        Returns a typed EmbeddingResult object.
         """
+        if not text or not text.strip():
+            raise EmbeddingException("Cannot embed an empty query.")
+
+        if not self.model:
+            raise EmbeddingException("Embedding model is not initialized.")
+
         try:
             embeddings = self.model.encode(
                 [text],
@@ -125,10 +164,10 @@ class BGEEmbeddingService:
             if 0 in lexical_weights:
                 sparse = {int(k): float(v) for k, v in lexical_weights[0].items()}
                 
-            return {
-                "dense_vector": dense,
-                "sparse_vector": sparse
-            }
+            return EmbeddingResult(
+                dense_vector=dense,
+                sparse_vector=sparse
+            )
             
         except Exception as e:
             logger.error(f"Failed to generate query embedding: {e}")

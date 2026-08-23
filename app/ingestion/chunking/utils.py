@@ -1,6 +1,6 @@
 import hashlib
 from uuid import UUID
-from typing import List, Tuple
+from typing import Tuple
 import tiktoken
 from loguru import logger
 
@@ -13,7 +13,11 @@ def get_token_encoder(model_name: str = "cl100k_base") -> tiktoken.Encoding:
         return tiktoken.get_encoding("cl100k_base")
 
 def generate_deterministic_id(document_id: UUID, chunk_index: int, content: str) -> str:
-    """Generates a deterministic SHA256 hash for the chunk."""
+    """
+    Generates a deterministic SHA256 hash for the chunk.
+    Ensures that re-ingesting the exact same document yields the exact same chunk IDs,
+    which is critical for Qdrant idempotent upserts.
+    """
     hash_input = f"{document_id}:{chunk_index}:{content}".encode("utf-8")
     return hashlib.sha256(hash_input).hexdigest()
 

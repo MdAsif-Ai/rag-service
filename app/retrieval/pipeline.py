@@ -51,7 +51,7 @@ class RetrievalPipeline:
         self, 
         query: str, 
         course_ids: List[str], 
-        top_k: int, 
+        top_k: Optional[int] = None,
         filters: Optional[RetrievalFilters] = None
     ) -> RetrievalResponse:
         """
@@ -69,68 +69,60 @@ class RetrievalPipeline:
         filters = filters or RetrievalFilters()
         q_hash = hashlib.sha256(query.encode()).hexdigest()[:8]
         
+        metrics = RetrievalMetrics(query_hash=q_hash)
+        
         try:
             # 1. Single Query Encoding (wrapped in thread to avoid blocking)
             t0 = time.time()
             embeddings: QueryEmbeddingResult = await asyncio.to_thread(self.encoder.encode, query)
-            emb_lat = (time.time() - t0) * 1000
+            metrics.embedding_latency_ms = (time.time() - t0) * 1000
             
             # 2. Concurrent Retrieval (sync Qdrant client isolated in threads)
             t1 = time.time()
             dense_task = asyncio.to_thread(
-                self.dense.retrieve, embeddings.dense_vector, course_ids, settings.DEFAULT_TOP_K, filters
+                self.dense.retrieve, embeddings.dense_vector, course_ids, settings.DENSE_TOP_K, filters
             )
             sparse_task = asyncio.to_thread(
-                self.sparse.retrieve, embeddings.sparse_vector, course_ids, settings.DEFAULT_TOP_K, filters
+                self.sparse.retrieve, embeddings.sparse_vector, course_ids, settings.SPARSE_TOP_K, filters
             )
             dense_results, sparse_results = await asyncio.gather(dense_task, sparse_task)
+            
+            # Dense and sparse run concurrently, so their latency overlaps.
+            # We record the total concurrent retrieval time for both.
             ret_lat = (time.time() - t1) * 1000
+            metrics.dense_latency_ms = ret_lat
+            metrics.sparse_latency_ms = ret_lat
+            
+            metrics.dense_candidates = len(dense_results)
+            metrics.sparse_candidates = len(sparse_results)
             
             if not dense_results and not sparse_results:
                 logger.info(f"[{q_hash}] No retrieval candidates found.")
-                # Return empty response with zero metrics
-                metrics = RetrievalMetrics(
-                    query_hash=q_hash, embedding_latency_ms=emb_lat, dense_latency_ms=ret_lat/2,
-                    sparse_latency_ms=ret_lat/2, fusion_latency_ms=0, reranking_latency_ms=0,
-                    total_latency_ms=(time.time()-start_time)*1000, dense_candidates=0,
-                    sparse_candidates=0, fused_candidates=0, final_candidates=0
-                )
+                metrics.total_latency_ms = (time.time() - start_time) * 1000
                 return RetrievalResponse(results=[], total_candidates=0, final_count=0, timings=metrics)
                 
             # 3. Fusion
             t2 = time.time()
-            fused = self.fusion.fuse(dense_results, sparse_results)
-            fusion_lat = (time.time() - t2) * 1000
+            # Fuse all results, then slice to FUSION_TOP_K for reranking
+            fused = self.fusion.fuse(dense_results, sparse_results, top_k=settings.FUSION_TOP_K)
+            metrics.fusion_latency_ms = (time.time() - t2) * 1000
+            metrics.fused_candidates = len(fused)
             
             # 4. Reranking
             t3 = time.time()
-            rerank_candidates = fused[:settings.RERANK_TOP_K]
-            reranked = await asyncio.to_thread(self.reranker.rerank, query, rerank_candidates, settings.RERANK_TOP_K)
-            rerank_lat = (time.time() - t3) * 1000
+            # Use top_k from request if provided, else settings.FINAL_TOP_K
+            final_k = top_k if top_k is not None else settings.FINAL_TOP_K
+            reranked = await asyncio.to_thread(self.reranker.rerank, query, fused, final_k)
+            metrics.reranking_latency_ms = (time.time() - t3) * 1000
+            metrics.final_candidates = len(reranked)
             
-            # 5. Final slice
-            final_results = reranked[:top_k]
-            total_lat = (time.time() - start_time) * 1000
-            
-            metrics = RetrievalMetrics(
-                query_hash=q_hash,
-                embedding_latency_ms=emb_lat,
-                dense_latency_ms=ret_lat / 2,  # approx concurrent split
-                sparse_latency_ms=ret_lat / 2,
-                fusion_latency_ms=fusion_lat,
-                reranking_latency_ms=rerank_lat,
-                total_latency_ms=total_lat,
-                dense_candidates=len(dense_results),
-                sparse_candidates=len(sparse_results),
-                fused_candidates=len(fused),
-                final_candidates=len(final_results)
-            )
+            metrics.total_latency_ms = (time.time() - start_time) * 1000
             logger.info(f"Retrieval metrics: {metrics.model_dump_json()}")
             
             return RetrievalResponse(
-                results=final_results,
-                total_candidates=len(fused),
-                final_count=len(final_results),
+                results=reranked,
+                total_candidates=metrics.fused_candidates,
+                final_count=metrics.final_candidates,
                 timings=metrics
             )
             

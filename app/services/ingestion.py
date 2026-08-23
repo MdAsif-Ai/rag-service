@@ -30,7 +30,7 @@ class IngestionService:
         if ext not in settings.SUPPORTED_FILE_TYPES:
             raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=f"Unsupported file type: .{ext}")
 
-        # 2. Read file and check size
+        # 2. Read file and check size (MUST HAPPEN BEFORE DB CALLS)
         file_bytes = await file.read()
         if len(file_bytes) > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
             raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File size exceeds maximum limit")
@@ -48,19 +48,17 @@ class IngestionService:
         job_id = str(uuid.uuid4())
         
         try:
-            # Create Document record
             supabase.table("documents").insert({
                 "id": doc_id,
                 "course_id": course_id,
                 "filename": filename,
                 "file_type": ext,
                 "file_size": len(file_bytes),
-                "storage_path": "", # Temporary, update after upload
+                "storage_path": "", 
                 "checksum": checksum,
                 "status": "PENDING"
             }).execute()
             
-            # Create Job record
             supabase.table("ingestion_jobs").insert({
                 "id": job_id,
                 "document_id": doc_id,
@@ -77,7 +75,6 @@ class IngestionService:
             supabase.table("documents").update({"storage_path": storage_path}).eq("id", doc_id).execute()
         except Exception as e:
             logger.error(f"Storage failure for doc {doc_id}: {e}")
-            # Compensating transaction: cleanup DB records
             supabase.table("documents").delete().eq("id", doc_id).execute()
             supabase.table("ingestion_jobs").delete().eq("id", job_id).execute()
             raise HTTPException(status_code=500, detail="Failed to upload file to storage.")
@@ -87,8 +84,6 @@ class IngestionService:
             ingest_document.delay(doc_id, job_id)
         except Exception as e:
             logger.error(f"Queue failure for job {job_id}: {e}")
-            # Note: File is in storage, but job didn't queue. We leave records as PENDING/QUEUED 
-            # for a manual retry or sweeper service, rather than deleting the uploaded file.
             raise HTTPException(status_code=500, detail="Failed to queue background ingestion job.")
 
         return IngestionResponse(

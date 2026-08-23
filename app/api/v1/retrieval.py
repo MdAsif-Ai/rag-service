@@ -8,15 +8,14 @@ from app.retrieval.pipeline import RetrievalPipeline, RetrievalResponse
 
 router = APIRouter()
 
-# Dependency to provide the pipeline instance
 async def get_pipeline() -> RetrievalPipeline:
-    # In a real app, this would yield a cached/singleton pipeline
     from app.main import app_state
     return app_state.pipeline
 
 @router.post(
     "/retrieve", 
     response_model=APIRetrievalResponse,
+    status_code=status.HTTP_200_OK,
     dependencies=[Depends(verify_api_key)]
 )
 async def retrieve_context(
@@ -25,12 +24,10 @@ async def retrieve_context(
 ):
     """
     Retrieves knowledge context from the vector database.
-    This endpoint DOES NOT generate LLM answers. It returns chunks for the LMS to send to an LLM.
     """
     logger.info(f"Retrieval request for courses: {request.course_ids}, top_k: {request.top_k}")
     
     try:
-        # Execute the retrieval pipeline
         pipeline_response: RetrievalResponse = await pipeline.retrieve(
             query=request.query,
             course_ids=request.course_ids,
@@ -38,19 +35,44 @@ async def retrieve_context(
             filters=request.filters
         )
         
-        # Format the response for the API consumer
+        # Explicit mapping from internal RetrievalCandidate to public RetrievedChunk
+        results = [
+            RetrievedChunk(
+                chunk_id=c.chunk_id,
+                document_id=c.document_id,
+                course_id=c.course_id,
+                filename=c.filename,
+                content=c.content,
+                page=c.page,
+                chapter=c.chapter,
+                section=c.section,
+                chunk_index=c.chunk_index,
+                dense_score=c.dense_score,
+                sparse_score=c.sparse_score,
+                fusion_score=c.fusion_score,
+                rerank_score=c.rerank_score,
+                metadata=c.metadata
+            ) for c in pipeline_response.results
+        ]
+        
         return APIRetrievalResponse(
             query=request.query,
             total_candidates=pipeline_response.total_candidates,
             final_count=pipeline_response.final_count,
-            results=pipeline_response.results
+            results=results
         )
         
     except ValidationException as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.message)
     except RetrievalException as e:
         logger.error(f"Retrieval pipeline failed: {e.detail}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Retrieval service temporarily unavailable.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
+            detail="Retrieval service temporarily unavailable."
+        )
     except Exception as e:
         logger.error(f"Unexpected error during retrieval: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="An unexpected error occurred."
+        )

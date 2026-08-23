@@ -10,7 +10,6 @@ from app.db.supabase import get_supabase_client
 async def check_qdrant() -> bool:
     try:
         repo = get_qdrant_repository()
-        # Wrap sync call in thread and enforce a 2-second timeout
         return await asyncio.wait_for(asyncio.to_thread(repo.health_check), timeout=2.0)
     except Exception as e:
         logger.error(f"Health check: Qdrant failed: {e}")
@@ -30,7 +29,6 @@ async def check_redis() -> bool:
 async def check_supabase() -> bool:
     try:
         sb = get_supabase_client()
-        # Lightweight query to verify DB connectivity
         def _query():
             return sb.table("documents").select("id").limit(1).execute()
         await asyncio.wait_for(asyncio.to_thread(_query), timeout=3.0)
