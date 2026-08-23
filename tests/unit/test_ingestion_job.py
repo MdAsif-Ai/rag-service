@@ -63,20 +63,18 @@ def test_successful_ingestion(mock_dependencies):
         data={"id": "doc1", "file_type": "pdf", "storage_path": "path", "filename": "f.pdf", "course_id": "c1"}
     )
     
-    task = MagicMock()
-    task.request.retries = 0
-    task.max_retries = 3
-    task.retry = MagicMock(side_effect=Exception("Should not retry"))
-    
-    # Use .run to invoke the bound task function directly
-    ingest_document.run(task, "doc1", "job1")
-    
-    task.retry.assert_not_called()
-    mocks["storage"].download_file.assert_called_once_with("path")
-    mocks["loader"]._safe_load.assert_called_once()
-    mocks["qdrant"].delete_document.assert_called_once_with("doc1")
-    mocks["qdrant"].upsert_points.assert_called_once()
-    mocks["status"].assert_any_call("job1", "COMPLETED", "DONE")
+    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+         patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
+        
+        # Call the task directly. Celery will inject the bound 'self'.
+        ingest_document("doc1", "job1")
+        
+        mock_retry.assert_not_called()
+        mocks["storage"].download_file.assert_called_once_with("path")
+        mocks["loader"]._safe_load.assert_called_once()
+        mocks["qdrant"].delete_document.assert_called_once_with("doc1")
+        mocks["qdrant"].upsert_points.assert_called_once()
+        mocks["status"].assert_any_call("job1", "COMPLETED", "DONE")
 
 def test_permanent_failure_unsupported_file(mock_dependencies):
     mocks = mock_dependencies
@@ -86,16 +84,14 @@ def test_permanent_failure_unsupported_file(mock_dependencies):
     
     mocks["loader"]._safe_load.side_effect = UnsupportedFileException("Unsupported file type: xyz")
     
-    task = MagicMock()
-    task.request.retries = 0
-    task.max_retries = 3
-    task.retry = MagicMock(side_effect=Exception("Should not retry"))
-    
-    with pytest.raises(Ignore):
-        ingest_document.run(task, "doc1", "job1")
+    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+         patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
         
-    task.retry.assert_not_called()
-    mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Unsupported file type: xyz")
+        with pytest.raises(Ignore):
+            ingest_document("doc1", "job1")
+            
+        mock_retry.assert_not_called()
+        mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Unsupported file type: xyz")
 
 def test_transient_failure_qdrant_down(mock_dependencies):
     mocks = mock_dependencies
@@ -104,16 +100,14 @@ def test_transient_failure_qdrant_down(mock_dependencies):
     )
     mocks["qdrant"].upsert_points.side_effect = QdrantException("Connection lost")
     
-    task = MagicMock()
-    task.request.retries = 0
-    task.max_retries = 3
-    task.retry = MagicMock(side_effect=Exception("Retried"))
-    
-    with pytest.raises(Exception, match="Retried"):
-        ingest_document.run(task, "doc1", "job1")
+    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+         patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Retried"))) as mock_retry:
         
-    task.retry.assert_called_once()
-    mocks["status"].assert_any_call("job1", "PROCESSING", "RETRYING", error="Attempt 1 failed. Retrying...")
+        with pytest.raises(Exception, match="Retried"):
+            ingest_document("doc1", "job1")
+            
+        mock_retry.assert_called_once()
+        mocks["status"].assert_any_call("job1", "PROCESSING", "RETRYING", error="Attempt 1 failed. Retrying...")
 
 def test_max_retries_exceeded_marks_failed(mock_dependencies):
     mocks = mock_dependencies
@@ -122,16 +116,14 @@ def test_max_retries_exceeded_marks_failed(mock_dependencies):
     )
     mocks["qdrant"].upsert_points.side_effect = QdrantException("Connection lost")
     
-    task = MagicMock()
-    task.request.retries = 3
-    task.max_retries = 3
-    task.retry = MagicMock(side_effect=Exception("Should not retry"))
-    
-    with pytest.raises(Ignore):
-        ingest_document.run(task, "doc1", "job1")
+    with patch.object(ingest_document, 'request', MagicMock(retries=3)), \
+         patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Should not retry"))) as mock_retry:
         
-    task.retry.assert_not_called()
-    mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Max retries exceeded. Transient infrastructure error.")
+        with pytest.raises(Ignore):
+            ingest_document("doc1", "job1")
+            
+        mock_retry.assert_not_called()
+        mocks["status"].assert_any_call("job1", "FAILED", "FAILED", error="Max retries exceeded. Transient infrastructure error.")
 
 def test_job_status_update_failure_triggers_transient_retry(mock_dependencies):
     mocks = mock_dependencies
@@ -141,12 +133,10 @@ def test_job_status_update_failure_triggers_transient_retry(mock_dependencies):
     
     mocks["status"].side_effect = TransientDBError("Supabase connection lost")
     
-    task = MagicMock()
-    task.request.retries = 0
-    task.max_retries = 3
-    task.retry = MagicMock(side_effect=Exception("Retried"))
-    
-    with pytest.raises(Exception, match="Retried"):
-        ingest_document.run(task, "doc1", "job1")
+    with patch.object(ingest_document, 'request', MagicMock(retries=0)), \
+         patch.object(ingest_document, 'retry', MagicMock(side_effect=Exception("Retried"))) as mock_retry:
         
-    task.retry.assert_called_once()
+        with pytest.raises(Exception, match="Retried"):
+            ingest_document("doc1", "job1")
+            
+        mock_retry.assert_called_once()

@@ -46,7 +46,8 @@ def test_empty_query_raises_validation(reranker_service):
         reranker_service.rerank("", [make_candidate("c1")])
 
 def test_missing_content_raises_validation(reranker_service):
-    c1 = make_candidate("c1", content=None)
+    # Pydantic schema rejects None for 'content'. Use empty string to test service validation.
+    c1 = make_candidate("c1", content="")
     with pytest.raises(ValidationException):
         reranker_service.rerank("query", [c1])
 
