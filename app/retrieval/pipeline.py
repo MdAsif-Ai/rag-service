@@ -80,15 +80,21 @@ class RetrievalPipeline:
             # 2. Concurrent Retrieval (sync Qdrant client isolated in threads)
             t1 = time.time()
             dense_task = asyncio.to_thread(
-                self.dense.retrieve, embeddings.dense_vector, course_ids, settings.DENSE_TOP_K, filters
+                self.dense.retrieve, 
+                embeddings.dense_vector, 
+                course_ids=course_ids, 
+                top_k=settings.DENSE_TOP_K, 
+                filters=filters
             )
             sparse_task = asyncio.to_thread(
-                self.sparse.retrieve, embeddings.sparse_vector, course_ids, settings.SPARSE_TOP_K, filters
+                self.sparse.retrieve, 
+                embeddings.sparse_vector, 
+                course_ids=course_ids, 
+                top_k=settings.SPARSE_TOP_K, 
+                filters=filters
             )
             dense_results, sparse_results = await asyncio.gather(dense_task, sparse_task)
             
-            # Dense and sparse run concurrently, so their latency overlaps.
-            # We record the total concurrent retrieval time for both.
             ret_lat = (time.time() - t1) * 1000
             metrics.dense_latency_ms = ret_lat
             metrics.sparse_latency_ms = ret_lat
@@ -103,24 +109,28 @@ class RetrievalPipeline:
                 
             # 3. Fusion
             t2 = time.time()
-            # Fuse all results, then slice to FUSION_TOP_K for reranking
             fused = self.fusion.fuse(dense_results, sparse_results, top_k=settings.FUSION_TOP_K)
             metrics.fusion_latency_ms = (time.time() - t2) * 1000
             metrics.fused_candidates = len(fused)
             
             # 4. Reranking
             t3 = time.time()
-            # Use top_k from request if provided, else settings.FINAL_TOP_K
             final_k = top_k if top_k is not None else settings.FINAL_TOP_K
+            
+            # Pass final_k to reranker as a hint
             reranked = await asyncio.to_thread(self.reranker.rerank, query, fused, final_k)
+            
+            # Enforce final top_k constraint at the pipeline level to guarantee API contract
+            final_results = reranked[:final_k]
+            
             metrics.reranking_latency_ms = (time.time() - t3) * 1000
-            metrics.final_candidates = len(reranked)
+            metrics.final_candidates = len(final_results)
             
             metrics.total_latency_ms = (time.time() - start_time) * 1000
             logger.info(f"Retrieval metrics: {metrics.model_dump_json()}")
             
             return RetrievalResponse(
-                results=reranked,
+                results=final_results,
                 total_candidates=metrics.fused_candidates,
                 final_count=metrics.final_candidates,
                 timings=metrics
