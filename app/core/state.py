@@ -1,9 +1,10 @@
-from typing import Any
+from typing import TYPE_CHECKING, Optional
 
+if TYPE_CHECKING:
+    from app.retrieval.pipeline import RetrievalPipeline
 
 class AppState:
-    def __init__(self) -> None:
-        self.retrieval_pipeline: Any = None
-
+    # Explicitly define the attribute so it always exists
+    pipeline: Optional["RetrievalPipeline"] = None
 
 app_state = AppState()

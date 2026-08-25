@@ -7,7 +7,7 @@ from app.core.exceptions import RetrievalException, ValidationException
 from app.schemas.retrieval import RetrievalRequest, APIRetrievalResponse, RetrievedChunk
 from app.retrieval.pipeline import RetrievalPipeline, RetrievalResponse
 from app.retrieval.models import RetrievalFilters
-from app.core.state import app_state
+from app.core.state import app_state  # <--- MUST IMPORT FROM core.state
 
 router = APIRouter()
 
@@ -29,7 +29,6 @@ async def retrieve_context(
     logger.info(f"Retrieval request for courses: {request.course_ids}, top_k: {request.top_k}")
     
     try:
-        # Map API schema filters to internal model filters
         internal_filters: Optional[RetrievalFilters] = None
         if request.filters:
             internal_filters = RetrievalFilters(**request.filters.model_dump())
