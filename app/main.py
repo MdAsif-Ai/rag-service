@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from app.embeddings.bge_m3 import get_embedding_service
         
         qdrant_repo = get_qdrant_repository()
+        if not qdrant_repo.collection_exists():
+            qdrant_repo.create_collection()
         encoder = BGEQueryEncoder(get_embedding_service())
         
         app_state.pipeline = RetrievalPipeline(
