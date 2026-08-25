@@ -1,61 +1,158 @@
-# ==========================================
+# ============================================================
 # Stage 1: Builder
-# ==========================================
+# ============================================================
+
 FROM python:3.12-slim AS builder
 
-# Install build dependencies required by some ML libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ------------------------------------------------------------
+# Build dependencies
+# ------------------------------------------------------------
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv using the official standalone installer
+
+# ------------------------------------------------------------
+# Install uv
+# ------------------------------------------------------------
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
-# Copy only dependency manifests first to leverage Docker layer caching
+
+# ------------------------------------------------------------
+# Copy dependency files first
+# This allows Docker to cache dependency installation.
+# ------------------------------------------------------------
+
 COPY pyproject.toml uv.lock ./
 
-# Create a virtual environment and install dependencies from lockfile
-# --no-install-project prevents it from failing because app source code isn't copied yet
-RUN uv venv /app/.venv && \
-    uv sync --frozen --no-dev --no-install-project
 
-# ==========================================
+# ------------------------------------------------------------
+# Create virtual environment
+# ------------------------------------------------------------
+
+RUN uv venv /app/.venv
+
+
+# ------------------------------------------------------------
+# Install locked production dependencies
+# ------------------------------------------------------------
+
+RUN uv sync \
+    --frozen \
+    --no-dev \
+    --no-install-project
+
+
+# ============================================================
 # Stage 2: Runtime
-# ==========================================
+# ============================================================
+
 FROM python:3.12-slim AS runtime
 
-# Install tini for proper signal handling (crucial for Celery) and curl for healthchecks
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tini \
-    curl \
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ------------------------------------------------------------
+# Runtime packages
+# ------------------------------------------------------------
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tini \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user
-RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser
+
+# ------------------------------------------------------------
+# Create non-root application user
+# ------------------------------------------------------------
+
+RUN groupadd --system appuser \
+    && useradd --system \
+        --gid appuser \
+        --create-home \
+        --home-dir /app \
+        --shell /usr/sbin/nologin \
+        appuser
+
 
 WORKDIR /app
 
-# Copy the virtual environment from the builder stage
-COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 
-# Activate the virtual environment
+# ------------------------------------------------------------
+# Copy Python virtual environment
+# ------------------------------------------------------------
+
+COPY --from=builder \
+    --chown=appuser:appuser \
+    /app/.venv \
+    /app/.venv
+
+
+# ------------------------------------------------------------
+# Use the virtual environment
+# ------------------------------------------------------------
+
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-# Set HuggingFace cache directory to a path we can mount
-ENV HF_HOME=/app/hf_cache
 
-# Copy application code
+
+# ------------------------------------------------------------
+# Hugging Face cache
+# ------------------------------------------------------------
+
+ENV HF_HOME="/app/hf_cache"
+ENV TRANSFORMERS_CACHE="/app/hf_cache"
+ENV HF_HUB_CACHE="/app/hf_cache/hub"
+
+
+# ------------------------------------------------------------
+# Copy application
+# ------------------------------------------------------------
+
 COPY --chown=appuser:appuser . /app
 
-# Create cache directory and give ownership to appuser
-RUN mkdir -p /app/hf_cache && chown -R appuser:appuser /app/hf_cache
+
+# ------------------------------------------------------------
+# Create Hugging Face cache directory
+# ------------------------------------------------------------
+
+RUN mkdir -p /app/hf_cache \
+    && chown -R appuser:appuser /app/hf_cache
+
+
+# ------------------------------------------------------------
+# Run as non-root
+# ------------------------------------------------------------
 
 USER appuser
 
+
+# ------------------------------------------------------------
+# tini handles signals correctly for FastAPI/Celery
+# ------------------------------------------------------------
+
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Default command (overridden by docker-compose for the worker)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ------------------------------------------------------------
+# Default API command
+#
+# docker-compose overrides this for rag-worker.
+# ------------------------------------------------------------
+
+CMD [
+    "uvicorn",
+    "app.main:app",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8000"
+]
