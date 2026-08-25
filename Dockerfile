@@ -20,24 +20,17 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tini curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --system appuser \
-    && useradd --system \
-       --gid appuser \
-       --create-home \
-       --home-dir /app \
-       --shell /usr/sbin/nologin \
-       appuser
+RUN groupadd -r appuser \
+    && useradd -r -g appuser -d /app -s /sbin/nologin appuser
 
 WORKDIR /app
 
-COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV HF_HOME="/app/hf_cache"
-ENV TRANSFORMERS_CACHE="/app/hf_cache"
-ENV HF_HUB_CACHE="/app/hf_cache/hub"
+ENV HF_HOME=/app/hf_cache
 
 COPY --chown=appuser:appuser . /app
 
@@ -48,4 +41,11 @@ USER appuser
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [
+    "uvicorn",
+    "app.main:app",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8000"
+]
