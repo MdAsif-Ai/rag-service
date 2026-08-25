@@ -7,7 +7,6 @@ from loguru import logger
 
 from .config import Settings, get_settings
 
-# Define the expected header for API key authentication
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
@@ -26,11 +25,9 @@ async def verify_api_key(
             detail="Missing API Key. Provide it in the 'X-API-Key' header.",
         )
 
-    # Ensure the configured key is a string for comparison
     configured_key = settings.RAG_SERVICE_API_KEY.get_secret_value()
 
     if not secrets.compare_digest(api_key_header, configured_key):
-        # Log the attempt without exposing the key used
         logger.warning("Invalid API Key attempt received.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,11 +44,15 @@ async def verify_health_api_key(
     """
     FastAPI dependency specifically for health endpoints.
     If HEALTH_CHECK_API_KEY is configured, it requires that key.
-    If it is NOT configured (empty), the endpoint is open for infrastructure load balancers
+    If it is NOT configured (None/empty), the endpoint is open for infrastructure load balancers
     and Docker healthchecks to access without authentication.
     """
-    # If no health key is configured in the environment, allow access
-    health_key = settings.HEALTH_CHECK_API_KEY.get_secret_value()
+    # Safely check if the key is None or empty
+    health_key_secret = settings.HEALTH_CHECK_API_KEY
+    if not health_key_secret:
+        return True
+
+    health_key = health_key_secret.get_secret_value()
     if not health_key:
         return True
 

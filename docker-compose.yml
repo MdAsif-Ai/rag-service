@@ -1,14 +1,12 @@
 services:
   rag-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: rag-api
     restart: unless-stopped
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8001:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -23,9 +21,7 @@ services:
       start_period: 15s
 
   rag-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     container_name: rag-worker
     restart: unless-stopped
     env_file:
@@ -37,7 +33,6 @@ services:
       - ./hf_cache:/app/hf_cache
     depends_on:
       - redis
-    # --- GPU SUPPORT ---
     deploy:
       resources:
         reservations:
@@ -50,8 +45,6 @@ services:
     image: redis:7-alpine
     container_name: rag-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
