@@ -1,76 +1,105 @@
-from fastapi import APIRouter, Depends, status, HTTPException
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+import uuid
+
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from loguru import logger
-from typing import Optional
 
-from app.core.security import verify_api_key
-from app.core.exceptions import RetrievalException, ValidationException
-from app.schemas.retrieval import RetrievalRequest, APIRetrievalResponse, RetrievedChunk
-from app.retrieval.pipeline import RetrievalPipeline, RetrievalResponse
-from app.retrieval.models import RetrievalFilters
-from app.core.state import app_state  # <--- MUST IMPORT FROM core.state
+from app.core.state import app_state
+from app.core.config import get_settings
+from app.core.logging import setup_logging, request_id_ctx
+from app.core.exceptions import RAGServiceException
 
-router = APIRouter()
+from app.api.v1.health import router as health_router
+from app.api.v1.ingestion import router as ingestion_router
+from app.api.v1.jobs import router as jobs_router
+from app.api.v1.retrieval import router as retrieval_router
+from app.api.v1.documents import router as documents_router
 
-async def get_pipeline() -> RetrievalPipeline:
-    if not app_state.pipeline:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Retrieval pipeline is not initialized.")
-    return app_state.pipeline
-
-@router.post(
-    "/retrieve", 
-    response_model=APIRetrievalResponse,
-    status_code=status.HTTP_200_OK,
-    dependencies=[Depends(verify_api_key)]
-)
-async def retrieve_context(
-    request: RetrievalRequest,
-    pipeline: RetrievalPipeline = Depends(get_pipeline)
-):
-    logger.info(f"Retrieval request for courses: {request.course_ids}, top_k: {request.top_k}")
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    settings = get_settings()
+    setup_logging()
+    logger.info(f"Starting {settings.APP_NAME} in {settings.APP_ENV} mode...")
     
     try:
-        internal_filters: Optional[RetrievalFilters] = None
-        if request.filters:
-            internal_filters = RetrievalFilters(**request.filters.model_dump())
-            
-        pipeline_response: RetrievalResponse = await pipeline.retrieve(
-            query=request.query,
-            course_ids=request.course_ids,
-            top_k=request.top_k,
-            filters=internal_filters
+        from app.retrieval.pipeline import RetrievalPipeline
+        from app.retrieval.query_encoder import BGEQueryEncoder
+        from app.retrieval.dense import DenseRetriever
+        from app.retrieval.sparse import SparseRetriever
+        from app.retrieval.fusion import RRFFusion
+        from app.retrieval.reranker import get_reranker_service
+        from app.vectorstore.qdrant import get_qdrant_repository
+        from app.embeddings.bge_m3 import get_embedding_service
+        
+        qdrant_repo = get_qdrant_repository()
+        encoder = BGEQueryEncoder(get_embedding_service())
+        
+        app_state.pipeline = RetrievalPipeline(
+            query_encoder=encoder,
+            dense_retriever=DenseRetriever(qdrant_repo),
+            sparse_retriever=SparseRetriever(qdrant_repo),
+            fusion_service=RRFFusion(k=settings.FUSION_RRF_K),
+            reranker=get_reranker_service()
         )
-        
-        results = [
-            RetrievedChunk(
-                chunk_id=c.chunk_id,
-                document_id=c.document_id,
-                course_id=c.course_id,
-                filename=c.filename,
-                content=c.content,
-                page=c.page,
-                chapter=c.chapter,
-                section=c.section,
-                chunk_index=c.chunk_index,
-                dense_score=c.dense_score,
-                sparse_score=c.sparse_score,
-                fusion_score=c.fusion_score,
-                rerank_score=c.rerank_score,
-                metadata=c.metadata
-            ) for c in pipeline_response.results
-        ]
-        
-        return APIRetrievalResponse(
-            query=request.query,
-            total_candidates=pipeline_response.total_candidates,
-            final_count=pipeline_response.final_count,
-            results=results
-        )
-        
-    except ValidationException as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=e.message)
-    except RetrievalException as e:
-        logger.error(f"Retrieval pipeline failed: {e.detail}")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Retrieval service temporarily unavailable.")
+        logger.info("Retrieval pipeline initialized.")
     except Exception as e:
-        logger.error(f"Unexpected error during retrieval: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
+        logger.warning(f"Pipeline initialization deferred or failed: {e}. Endpoints may be unavailable.")
+        app_state.pipeline = None
+
+    yield
+    logger.info(f"Shutting down {settings.APP_NAME}...")
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        token = request_id_ctx.set(req_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        request_id_ctx.reset(token)
+        return response
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    app = FastAPI(
+        title=settings.APP_NAME,
+        description="Production-grade Retrieval-Augmented Generation (RAG) service for the LMS.",
+        version="1.0.0",
+        docs_url="/docs" if settings.APP_ENV != "production" else None,
+        redoc_url="/redoc" if settings.APP_ENV != "production" else None,
+        lifespan=lifespan
+    )
+    
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["X-Request-ID"]
+    )
+    
+    @app.exception_handler(RAGServiceException)
+    async def rag_exception_handler(request: Request, exc: RAGServiceException):
+        logger.error(f"Application error: {exc.detail}")
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.message})
+        
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        logger.exception(f"Unhandled exception: {exc}")
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "An unexpected internal server error occurred."})
+
+    app.include_router(health_router, tags=["Health"])
+    api_prefix = settings.API_PREFIX
+    app.include_router(ingestion_router, prefix=api_prefix, tags=["Ingestion"])
+    app.include_router(jobs_router, prefix=api_prefix, tags=["Jobs"])
+    app.include_router(retrieval_router, prefix=api_prefix, tags=["Retrieval"])
+    app.include_router(documents_router, prefix=api_prefix, tags=["Documents"])
+    
+    return app
+
+app = create_app()
