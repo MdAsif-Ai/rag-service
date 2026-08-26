@@ -1,4 +1,27 @@
 # ==========================================
+# Stage 1: Builder
+# ==========================================
+FROM python:3.12-slim AS builder
+
+# Install build dependencies required by some ML libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv using the official standalone installer
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+WORKDIR /app
+
+# Copy only dependency manifests first to leverage Docker layer caching
+COPY pyproject.toml uv.lock ./
+
+# Create a virtual environment and install dependencies from lockfile
+# --no-install-project prevents it from failing because app source code isn't copied yet
+RUN uv venv /app/.venv && \
+    uv sync --frozen --no-dev --no-install-project
+
+# ==========================================
 # Stage 2: Runtime
 # ==========================================
 FROM python:3.12-slim AS runtime
