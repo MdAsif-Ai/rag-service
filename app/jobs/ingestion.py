@@ -149,6 +149,7 @@ def ingest_document(self, document_id: str, job_id: str):
         # Permanent failures: do not retry, mark as failed immediately
         # We log e.detail here to see the full traceback of why Docling failed
         logger.error(f"Permanent ingestion failure for {document_id}: {e} \nDETAIL:\n{e.detail}")
+        
         try:
             update_job_status(job_id, "FAILED", "FAILED", error=str(e.message))
             supabase.table("documents").update({"status": "FAILED"}).eq("id", document_id).execute()

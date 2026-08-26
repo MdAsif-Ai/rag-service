@@ -12,7 +12,7 @@ class ParsedSection(BaseModel):
     page: Optional[int] = None
     section: Optional[str] = None
     chapter: Optional[str] = None
-    content_type: str = "text"  # text, table, code, list
+    content_type: str = "text"
     source_type: str = "unknown"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -20,18 +20,11 @@ class ParsedSection(BaseModel):
 
 
 class DocumentLoader(ABC):
-    """
-    Common interface for all document loaders.
-    Implementations must handle parsing without crashing the worker on malformed input.
-    """
-
     @abstractmethod
     def load(self, file_path: str) -> List[ParsedSection]:
-        """Parses the document and returns a list of normalized sections."""
         pass
 
     def _safe_load(self, file_path: str) -> List[ParsedSection]:
-        """Wrapper to catch library-specific exceptions and normalize them."""
         try:
             sections = self.load(file_path)
             if not sections:
@@ -40,7 +33,6 @@ class DocumentLoader(ABC):
         except DocumentProcessingException:
             raise
         except Exception as e:
-            # Capture the full traceback to see exactly why the parser failed
             raise DocumentProcessingException(
                 f"Failed to parse file {file_path} with {self.__class__.__name__}",
                 detail=traceback.format_exc()
