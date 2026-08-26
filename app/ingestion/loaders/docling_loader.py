@@ -1,63 +1,136 @@
+from __future__ import annotations
+
 import logging
-from typing import List
+from pathlib import Path
+from typing import List, Optional
+
 from docling.document_converter import DocumentConverter
+
+from app.core.exceptions import DocumentProcessingException
 from app.ingestion.loaders.base import DocumentLoader, ParsedSection
+
 
 logger = logging.getLogger(__name__)
 
+
 class DoclingLoader(DocumentLoader):
     """
-    Universal document loader using Docling.
-    Handles PDF, DOCX, PPTX, HTML, and images with automatic OCR and table extraction.
-    """
-    
-    # Initialize the converter once per worker process
-    _converter = None
+    Universal document loader powered by Docling.
 
-    def __init__(self):
-        if DoclingLoader._converter is None:
-            logger.info("Initializing Docling DocumentConverter...")
-            # Docling will automatically download its models to the HF cache on first run
-            DoclingLoader._converter = DocumentConverter()
+    Docling is used as the single extraction backend for supported
+    document formats such as:
+
+        - PDF
+        - DOCX
+        - PPTX
+        - HTML
+        - Markdown
+        - TXT
+        - common image formats
+
+    The loader converts the source document into structured Markdown,
+    preserving useful document structure such as headings, tables and
+    document ordering as much as Docling supports.
+    """
+
+    _converter: Optional[DocumentConverter] = None
+
+    @classmethod
+    def _get_converter(cls) -> DocumentConverter:
+        """
+        Create the Docling converter once per worker process.
+
+        Celery workers should therefore reuse the same converter rather
+        than downloading/loading models for every document.
+        """
+        if cls._converter is None:
+            logger.info("Initializing Docling DocumentConverter")
+
+            cls._converter = DocumentConverter()
+
+            logger.info("Docling DocumentConverter initialized")
+
+        return cls._converter
 
     def load(self, file_path: str) -> List[ParsedSection]:
-        # Docling converts the document into a structured format
-        result = DoclingLoader._converter.convert(file_path)
-        
-        # Docling can export to Markdown, which perfectly preserves tables and headers
-        markdown_content = result.document.export_to_markdown()
-        
-        sections = []
-        current_section = "Default"
-        current_text = []
-        
-        # Parse the Markdown to extract sections and text
-        for line in markdown_content.split("\n"):
-            if line.startswith("#"):
-                # Save the previous section
-                if current_text:
-                    sections.append(ParsedSection(
-                        content="\n".join(current_text).strip(),
-                        section=current_section,
-                        source_type="docling"
-                    ))
-                    current_text = []
-                # Update current section title
-                current_section = line.lstrip("#").strip()
-            else:
-                if line.strip():
-                    current_text.append(line)
-        
-        # Add the final section
-        if current_text:
-            sections.append(ParsedSection(
-                content="\n".join(current_text).strip(),
-                section=current_section,
-                source_type="docling"
-            ))
-            
-        if not sections:
-            # Fallback if no headers were found
-            sections.append(ParsedSection(content=markdown_content, source_type="docling"))
-            
-        return sections
+        """
+        Extract structured content from a document.
+
+        Args:
+            file_path: Local path to the document.
+
+        Returns:
+            A list containing the extracted document content.
+
+        Raises:
+            DocumentProcessingException:
+                If the file does not exist or Docling cannot process it.
+        """
+        path = Path(file_path)
+
+        if not path.exists():
+            raise DocumentProcessingException(
+                f"Document does not exist: {file_path}"
+            )
+
+        if not path.is_file():
+            raise DocumentProcessingException(
+                f"Path is not a file: {file_path}"
+            )
+
+        try:
+            converter = self._get_converter()
+
+            logger.info(
+                "Extracting document with Docling: %s",
+                path.name,
+            )
+
+            result = converter.convert(str(path))
+
+            document = result.document
+
+            markdown_content = document.export_to_markdown()
+
+            if not markdown_content or not markdown_content.strip():
+                raise DocumentProcessingException(
+                    f"Docling extracted no usable content from "
+                    f"'{path.name}'"
+                )
+
+            markdown_content = markdown_content.strip()
+
+            metadata = {
+                "filename": path.name,
+                "file_type": path.suffix.lower().lstrip("."),
+                "parser": "docling",
+            }
+
+            section = ParsedSection(
+                content=markdown_content,
+                section=path.stem,
+                content_type="document",
+                source_type="docling",
+                metadata=metadata,
+            )
+
+            logger.info(
+                "Successfully extracted %d characters from %s",
+                len(markdown_content),
+                path.name,
+            )
+
+            return [section]
+
+        except DocumentProcessingException:
+            raise
+
+        except Exception as exc:
+            logger.exception(
+                "Docling failed to process document: %s",
+                file_path,
+            )
+
+            raise DocumentProcessingException(
+                f"Docling failed to process '{path.name}': {exc}"
+            ) from exc
