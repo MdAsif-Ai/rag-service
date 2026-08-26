@@ -1,3 +1,4 @@
+import traceback
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
@@ -39,7 +40,8 @@ class DocumentLoader(ABC):
         except DocumentProcessingException:
             raise
         except Exception as e:
+            # Capture the full traceback to see exactly why the parser failed
             raise DocumentProcessingException(
                 f"Failed to parse file {file_path} with {self.__class__.__name__}",
-                detail=str(e)
+                detail=traceback.format_exc()
             )

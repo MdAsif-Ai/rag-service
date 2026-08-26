@@ -146,9 +146,11 @@ def ingest_document(self, document_id: str, job_id: str):
                 os.remove(tmp_file_path)
                 
     except (UnsupportedFileException, DocumentProcessingException) as e:
-        logger.error(f"Permanent ingestion failure for {document_id}: {e}")
+        # Permanent failures: do not retry, mark as failed immediately
+        # We log e.detail here to see the full traceback of why Docling failed
+        logger.error(f"Permanent ingestion failure for {document_id}: {e} \nDETAIL:\n{e.detail}")
         try:
-            update_job_status(job_id, "FAILED", "FAILED", error=e.message)
+            update_job_status(job_id, "FAILED", "FAILED", error=str(e.message))
             supabase.table("documents").update({"status": "FAILED"}).eq("id", document_id).execute()
         except Exception as db_err:
             logger.error(f"Failed to mark job {job_id} as FAILED in DB: {db_err}")
