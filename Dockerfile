@@ -55,8 +55,8 @@ ENV HF_HOME=/app/hf_cache
 # Copy application code
 COPY --chown=appuser:appuser . /app
 
-# Create cache directory and give ownership to appuser
-RUN mkdir -p /app/hf_cache && chown -R appuser:appuser /app/hf_cache
+# Ensure appuser owns the entire /app directory (fixes EasyOCR permission errors)
+RUN chown -R appuser:appuser /app
 
 USER appuser
 
