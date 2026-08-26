@@ -1,24 +1,21 @@
 from typing import Any, Type
 from app.core.exceptions import UnsupportedFileException
 from .base import DocumentLoader, ParsedSection
-from .pdf import PDFLoader
-from .docx import DOCXLoader
-from .pptx import PPTXLoader
-from .xlsx import XLSXLoader
-from .html import HTMLLoader
-from .markdown import MarkdownLoader
-from .text import TextLoader
+from .docling_loader import DoclingLoader
 
+# We now use Docling for almost everything
 LOADER_MAP: dict[str, Type[Any]] = {
-    "pdf": PDFLoader,
-    "docx": DOCXLoader,
-    "pptx": PPTXLoader,
-    "xlsx": XLSXLoader,
-    "html": HTMLLoader,
-    "htm": HTMLLoader,
-    "md": MarkdownLoader,
-    "markdown": MarkdownLoader,
-    "txt": TextLoader,
+    "pdf": DoclingLoader,
+    "docx": DoclingLoader,
+    "pptx": DoclingLoader,
+    "html": DoclingLoader,
+    "htm": DoclingLoader,
+    "md": DoclingLoader,
+    "markdown": DoclingLoader,
+    "txt": DoclingLoader,
+    "png": DoclingLoader,
+    "jpg": DoclingLoader,
+    "jpeg": DoclingLoader,
 }
 
 def get_loader(file_type: str) -> DocumentLoader:

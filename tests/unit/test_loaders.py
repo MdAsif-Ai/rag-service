@@ -1,72 +1,53 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from app.ingestion.loaders import get_loader
-from app.ingestion.loaders.markdown import MarkdownLoader
-from app.ingestion.loaders.html import HTMLLoader
-from app.ingestion.loaders.text import TextLoader
+from app.ingestion.loaders import get_loader, DoclingLoader
+from app.ingestion.loaders.base import ParsedSection
 from app.core.exceptions import UnsupportedFileException
+
+# This fixture automatically mocks the DocumentConverter for ALL tests in this file
+# It prevents Docling from downloading 1GB+ of models during tests
+@pytest.fixture(autouse=True)
+def mock_docling_converter():
+    with patch("app.ingestion.loaders.docling_loader.DocumentConverter") as mock_converter_class:
+        mock_instance = MagicMock()
+        mock_converter_class.return_value = mock_instance
+        
+        # Set the class variable so __init__ skips real initialization
+        DoclingLoader._converter = mock_instance
+        yield mock_instance
+        
+        # Cleanup after tests
+        DoclingLoader._converter = None
 
 def test_unsupported_file_type():
     with pytest.raises(UnsupportedFileException):
         get_loader("exe")
 
-def test_text_loader(tmp_path):
-    file_path = tmp_path / "test.txt"
-    file_path.write_text("Hello World")
+def test_get_loader_returns_docling(mock_docling_converter):
+    # Verify all formats route to DoclingLoader without triggering real initialization
+    loader_pdf = get_loader("pdf")
+    assert isinstance(loader_pdf, DoclingLoader)
     
-    loader = TextLoader()
-    sections = loader._safe_load(str(file_path))
-    
-    assert len(sections) == 1
-    assert sections[0].content == "Hello World"
-    assert sections[0].source_type == "txt"
+    loader_docx = get_loader("docx")
+    assert isinstance(loader_docx, DoclingLoader)
 
-def test_markdown_loader_preserves_headings(tmp_path):
-    file_path = tmp_path / "test.md"
-    file_path.write_text("# Chapter 1\n\nSome text here\n\n## Section 2\n\nMore text")
+def test_docling_loader_parses_markdown(mock_docling_converter):
+    # Setup mock for the conversion result
+    mock_result = MagicMock()
+    mock_document = MagicMock()
+    # Simulate Docling exporting a Markdown string
+    mock_document.export_to_markdown.return_value = "# Chapter 1\n\nSome text here\n\n## Section 2\n\nMore text"
+    mock_result.document = mock_document
+    mock_docling_converter.convert.return_value = mock_result
     
-    loader = MarkdownLoader()
-    sections = loader._safe_load(str(file_path))
+    loader = DoclingLoader()
+    sections = loader._safe_load("fake_path.pdf")
     
     assert len(sections) == 2
     assert sections[0].section == "Chapter 1"
     assert sections[0].content == "Some text here"
+    assert sections[0].source_type == "docling"
+    
     assert sections[1].section == "Section 2"
-    assert sections[1].source_type == "md"
-
-def test_html_loader_preserves_structure(tmp_path):
-    file_path = tmp_path / "test.html"
-    file_path.write_text("<html><body><h1>Title</h1><p>Content</p></body></html>")
-    
-    loader = HTMLLoader()
-    sections = loader._safe_load(str(file_path))
-    
-    assert len(sections) == 1
-    assert sections[0].section == "Title"
-    assert sections[0].content == "Content"
-    assert sections[0].source_type == "html"
-
-@patch("app.ingestion.loaders.docx.Document")
-def test_docx_loader_metadata_mapping(mock_docx_class):
-    mock_doc = MagicMock()
-    
-    # Properly mock paragraphs to simulate the loop in DOCXLoader
-    mock_para1 = MagicMock()
-    mock_para1.text = "Heading 1"
-    mock_para1.style.name = "Heading 1"
-    
-    mock_para2 = MagicMock()
-    mock_para2.text = "Paragraph text"
-    mock_para2.style.name = "Normal"
-    
-    mock_doc.paragraphs = [mock_para1, mock_para2]
-    mock_docx_class.return_value = mock_doc
-    
-    loader = get_loader("docx")
-    sections = loader._safe_load("fake_path.docx")
-    
-    assert len(sections) == 1
-    assert sections[0].section == "Heading 1"
-    assert sections[0].content == "Paragraph text"
-    assert sections[0].source_type == "docx"
+    assert sections[1].content == "More text"
