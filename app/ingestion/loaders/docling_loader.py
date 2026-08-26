@@ -15,22 +15,20 @@ logger = logging.getLogger(__name__)
 
 class DoclingLoader(DocumentLoader):
     """
-    Universal document loader powered by Docling.
+    Universal document loader using Docling.
 
-    Docling is used as the single extraction backend for supported
-    document formats such as:
+    Docling handles supported formats such as:
 
-        - PDF
-        - DOCX
-        - PPTX
-        - HTML
-        - Markdown
-        - TXT
-        - common image formats
+    - PDF
+    - DOCX
+    - PPTX
+    - HTML
+    - Markdown
+    - TXT
+    - Images
 
-    The loader converts the source document into structured Markdown,
-    preserving useful document structure such as headings, tables and
-    document ordering as much as Docling supports.
+    The extracted document is converted to Markdown so the rest of
+    the RAG pipeline can operate on one normalized representation.
     """
 
     _converter: Optional[DocumentConverter] = None
@@ -40,11 +38,12 @@ class DoclingLoader(DocumentLoader):
         """
         Create the Docling converter once per worker process.
 
-        Celery workers should therefore reuse the same converter rather
-        than downloading/loading models for every document.
+        Celery workers reuse the converter instead of initializing it
+        for every document.
         """
+
         if cls._converter is None:
-            logger.info("Initializing Docling DocumentConverter")
+            logger.info("Initializing Docling DocumentConverter...")
 
             cls._converter = DocumentConverter()
 
@@ -54,18 +53,15 @@ class DoclingLoader(DocumentLoader):
 
     def load(self, file_path: str) -> List[ParsedSection]:
         """
-        Extract structured content from a document.
+        Extract content from a document using Docling.
 
         Args:
-            file_path: Local path to the document.
+            file_path: Path to the uploaded document.
 
         Returns:
-            A list containing the extracted document content.
-
-        Raises:
-            DocumentProcessingException:
-                If the file does not exist or Docling cannot process it.
+            List of ParsedSection objects.
         """
+
         path = Path(file_path)
 
         if not path.exists():
@@ -86,19 +82,69 @@ class DoclingLoader(DocumentLoader):
                 path.name,
             )
 
-            result = converter.convert(str(path))
+            # ---------------------------------------------------------
+            # IMPORTANT:
+            # Depending on the installed Docling version/API,
+            # convert() may return:
+            #
+            #   ConversionResult
+            #
+            # or an iterator/generator of ConversionResult objects.
+            #
+            # Handle both forms.
+            # ---------------------------------------------------------
+
+            conversion = converter.convert(str(path))
+
+            if hasattr(conversion, "document"):
+                # Single ConversionResult
+                result = conversion
+
+            else:
+                # Generator / iterator
+                try:
+                    result = next(iter(conversion))
+                except StopIteration:
+                    raise DocumentProcessingException(
+                        f"Docling returned no conversion result for "
+                        f"'{path.name}'"
+                    )
 
             document = result.document
 
+            if document is None:
+                raise DocumentProcessingException(
+                    f"Docling returned no document for '{path.name}'"
+                )
+
+            # ---------------------------------------------------------
+            # Export the structured document to Markdown.
+            #
+            # Markdown preserves useful RAG structure including:
+            # headings
+            # paragraphs
+            # tables
+            # lists
+            # ordering
+            # ---------------------------------------------------------
+
             markdown_content = document.export_to_markdown()
 
-            if not markdown_content or not markdown_content.strip():
+            if not markdown_content:
                 raise DocumentProcessingException(
-                    f"Docling extracted no usable content from "
-                    f"'{path.name}'"
+                    f"Docling extracted no content from '{path.name}'"
                 )
 
             markdown_content = markdown_content.strip()
+
+            if not markdown_content:
+                raise DocumentProcessingException(
+                    f"Docling extracted empty content from '{path.name}'"
+                )
+
+            # ---------------------------------------------------------
+            # Metadata
+            # ---------------------------------------------------------
 
             metadata = {
                 "filename": path.name,
