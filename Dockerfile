@@ -13,11 +13,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
+# Increase UV timeout to 300 seconds to prevent network timeouts on large ML packages
+ENV UV_HTTP_TIMEOUT=300
+
 # Copy only dependency manifests first to leverage Docker layer caching
 COPY pyproject.toml uv.lock ./
 
 # Create a virtual environment and install dependencies from lockfile
-# --no-install-project prevents it from failing because app source code isn't copied yet
 RUN uv venv /app/.venv && \
     uv sync --frozen --no-dev --no-install-project
 
