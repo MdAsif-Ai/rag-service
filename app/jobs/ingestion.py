@@ -48,7 +48,7 @@ def update_job_status(job_id: str, status: str, stage: str, error: Optional[str]
         raise TransientDBError(str(e))
 
 @celery_app.task(bind=True, name="ingest_document")
-def ingest_document(self, document_id: str, job_id: str):
+def ingest_document(self, document_id: str, job_id: str, content_format: str = "auto", url: str = None):
     logger.info(f"Starting ingestion for document {document_id}, job {job_id}")
     settings = get_settings()
     
@@ -60,7 +60,6 @@ def ingest_document(self, document_id: str, job_id: str):
         if not doc_res.data:
             raise DocumentProcessingException(f"Document metadata not found for {document_id}")
         
-        # Cast to dict for mypy
         doc_metadata = cast(Dict[str, Any], doc_res.data)
         
         file_type = str(doc_metadata.get("file_type", "")).lower()
@@ -68,15 +67,22 @@ def ingest_document(self, document_id: str, job_id: str):
         filename = str(doc_metadata["filename"])
         course_id = str(doc_metadata["course_id"])
         
-        file_bytes = storage_service.download_file(storage_path)
+        tmp_file_path = None
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp_file:
-            tmp_file.write(file_bytes)
-            tmp_file_path = tmp_file.name
+        # If it's a URL (like YouTube), we don't download from Supabase
+        if url:
+            tmp_file_path = url  # Pass URL directly to loader
+        else:
+            file_bytes = storage_service.download_file(storage_path)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp_file:
+                tmp_file.write(file_bytes)
+                tmp_file_path = tmp_file.name
             
         try:
             update_job_status(job_id, "PROCESSING", "PARSING")
-            loader = get_loader(file_type)
+            
+            # Pass content_format and url to the loader factory
+            loader = get_loader(file_type, content_format=content_format, url=url)
             raw_sections = loader._safe_load(tmp_file_path)
             
             update_job_status(job_id, "PROCESSING", "NORMALIZING")
@@ -90,7 +96,6 @@ def ingest_document(self, document_id: str, job_id: str):
                 tokenizer_name=settings.CHUNK_TOKENIZER
             )
             
-            # Convert string UUID to actual UUID object for chunker
             import uuid
             doc_uuid = uuid.UUID(document_id)
             
@@ -142,14 +147,12 @@ def ingest_document(self, document_id: str, job_id: str):
             logger.info(f"Successfully ingested document {document_id}")
             
         finally:
-            if os.path.exists(tmp_file_path):
+            # Only delete if it's a physical temp file, not a URL string
+            if not url and tmp_file_path and os.path.exists(tmp_file_path):
                 os.remove(tmp_file_path)
                 
     except (UnsupportedFileException, DocumentProcessingException) as e:
-        # Permanent failures: do not retry, mark as failed immediately
-        # We log e.detail here to see the full traceback of why Docling failed
         logger.error(f"Permanent ingestion failure for {document_id}: {e} \nDETAIL:\n{e.detail}")
-        
         try:
             update_job_status(job_id, "FAILED", "FAILED", error=str(e.message))
             supabase.table("documents").update({"status": "FAILED"}).eq("id", document_id).execute()

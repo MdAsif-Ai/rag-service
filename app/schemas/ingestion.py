@@ -1,12 +1,7 @@
 from typing import Any, Dict, Optional
 from uuid import UUID
-
 from pydantic import BaseModel, Field
-
 from .jobs import JobStatus
-
-
-
 
 class IngestionMetadata(BaseModel):
     """
@@ -16,7 +11,14 @@ class IngestionMetadata(BaseModel):
     course_id: str = Field(..., min_length=1)
     filename: str = Field(..., min_length=1)
     file_metadata: Optional[Dict[str, Any]] = None
-
+    content_format: Optional[str] = Field(
+        default="auto", 
+        description="Hint for parser: e.g., 'auto', 'handwritten', 'diagram', 'scanned'"
+    )
+    url: Optional[str] = Field(
+        default=None, 
+        description="URL for YouTube videos or web pages"
+    )
 
 class IngestionResponse(BaseModel):
     document_id: UUID
