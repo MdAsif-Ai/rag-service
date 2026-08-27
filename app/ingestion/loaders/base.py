@@ -1,6 +1,9 @@
+from __future__ import annotations
+
+import traceback
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-import traceback
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -9,9 +12,7 @@ from app.core.exceptions import DocumentProcessingException
 
 class ParsedSection(BaseModel):
     """
-    Normalized internal representation of content extracted from a document.
-
-    Every loader must return one or more ParsedSection objects.
+    Normalized representation of content extracted by a loader.
     """
 
     content: str
@@ -25,31 +26,21 @@ class ParsedSection(BaseModel):
 
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True
+    )
 
 
 class DocumentLoader(ABC):
-    """
-    Base interface for all document loaders.
-    """
 
     @abstractmethod
     def load(self, file_path: str) -> List[ParsedSection]:
         """
-        Extract content from a file.
-
-        Args:
-            file_path: Path to the source document.
-
-        Returns:
-            List of ParsedSection objects.
+        Load and extract content from a document.
         """
         raise NotImplementedError
 
     def _safe_load(self, file_path: str) -> List[ParsedSection]:
-        """
-        Execute the loader with consistent error handling.
-        """
         try:
             sections = self.load(file_path)
 
@@ -58,7 +49,18 @@ class DocumentLoader(ABC):
                     "No content extracted from document."
                 )
 
-            return sections
+            valid_sections = [
+                section
+                for section in sections
+                if section.content and section.content.strip()
+            ]
+
+            if not valid_sections:
+                raise DocumentProcessingException(
+                    "Document was processed but contained no usable text."
+                )
+
+            return valid_sections
 
         except DocumentProcessingException:
             raise

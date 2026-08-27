@@ -1,182 +1,162 @@
-from __future__ import annotations
-
 import logging
 from pathlib import Path
-from typing import List, Optional
-
+from typing import Any, List, Union
 from docling.document_converter import DocumentConverter
 
-from app.core.exceptions import DocumentProcessingException
 from app.ingestion.loaders.base import DocumentLoader, ParsedSection
 
-
 logger = logging.getLogger(__name__)
-
 
 class DoclingLoader(DocumentLoader):
     """
     Universal document loader using Docling.
-
-    Docling handles supported formats such as:
-
-    - PDF
-    - DOCX
-    - PPTX
-    - HTML
-    - Markdown
-    - TXT
-    - Images
-
-    The extracted document is converted to Markdown so the rest of
-    the RAG pipeline can operate on one normalized representation.
+    Handles PDF, DOCX, PPTX, HTML, and images with automatic OCR and table extraction.
     """
+    
+    _converter: Union[DocumentConverter, None] = None
 
-    _converter: Optional[DocumentConverter] = None
-
-    @classmethod
-    def _get_converter(cls) -> DocumentConverter:
-        """
-        Create the Docling converter once per worker process.
-
-        Celery workers reuse the converter instead of initializing it
-        for every document.
-        """
-
-        if cls._converter is None:
+    def __init__(self) -> None:
+        if DoclingLoader._converter is None:
             logger.info("Initializing Docling DocumentConverter...")
-
-            cls._converter = DocumentConverter()
-
-            logger.info("Docling DocumentConverter initialized")
-
-        return cls._converter
+            DoclingLoader._converter = DocumentConverter()
+        self.converter = DoclingLoader._converter
 
     def load(self, file_path: str) -> List[ParsedSection]:
         """
-        Extract content from a document using Docling.
-
-        Args:
-            file_path: Path to the uploaded document.
-
-        Returns:
-            List of ParsedSection objects.
+        Parse a document with Docling and convert the resulting document
+        into ParsedSection objects used by the RAG ingestion pipeline.
         """
-
         path = Path(file_path)
 
         if not path.exists():
-            raise DocumentProcessingException(
-                f"Document does not exist: {file_path}"
-            )
+            raise FileNotFoundError(f"Document does not exist: {path}")
 
         if not path.is_file():
-            raise DocumentProcessingException(
-                f"Path is not a file: {file_path}"
-            )
+            raise ValueError(f"Document path is not a file: {path}")
 
         try:
-            converter = self._get_converter()
-
-            logger.info(
-                "Extracting document with Docling: %s",
-                path.name,
-            )
-
-            # ---------------------------------------------------------
-            # IMPORTANT:
-            # Depending on the installed Docling version/API,
-            # convert() may return:
-            #
-            #   ConversionResult
-            #
-            # or an iterator/generator of ConversionResult objects.
-            #
-            # Handle both forms.
-            # ---------------------------------------------------------
-
-            conversion = converter.convert(str(path))
-
-            if hasattr(conversion, "document"):
-                # Single ConversionResult
-                result = conversion
-
-            else:
-                # Generator / iterator
-                try:
-                    result = next(iter(conversion))
-                except StopIteration:
-                    raise DocumentProcessingException(
-                        f"Docling returned no conversion result for "
-                        f"'{path.name}'"
-                    )
-
-            document = result.document
+            result = self._convert(path)
+            document = self._extract_document(result)
 
             if document is None:
-                raise DocumentProcessingException(
-                    f"Docling returned no document for '{path.name}'"
-                )
+                raise RuntimeError(f"Docling returned no document for '{path.name}'")
 
-            # ---------------------------------------------------------
-            # Export the structured document to Markdown.
-            #
-            # Markdown preserves useful RAG structure including:
-            # headings
-            # paragraphs
-            # tables
-            # lists
-            # ordering
-            # ---------------------------------------------------------
+            markdown = document.export_to_markdown()
 
-            markdown_content = document.export_to_markdown()
+            if not markdown or not markdown.strip():
+                raise RuntimeError(f"Docling extracted no text from '{path.name}'")
 
-            if not markdown_content:
-                raise DocumentProcessingException(
-                    f"Docling extracted no content from '{path.name}'"
-                )
-
-            markdown_content = markdown_content.strip()
-
-            if not markdown_content:
-                raise DocumentProcessingException(
-                    f"Docling extracted empty content from '{path.name}'"
-                )
-
-            # ---------------------------------------------------------
-            # Metadata
-            # ---------------------------------------------------------
-
-            metadata = {
-                "filename": path.name,
-                "file_type": path.suffix.lower().lstrip("."),
-                "parser": "docling",
-            }
-
-            section = ParsedSection(
-                content=markdown_content,
-                section=path.stem,
-                content_type="document",
-                source_type="docling",
-                metadata=metadata,
+            return self._markdown_to_sections(
+                markdown=markdown,
+                filename=path.name,
             )
-
-            logger.info(
-                "Successfully extracted %d characters from %s",
-                len(markdown_content),
-                path.name,
-            )
-
-            return [section]
-
-        except DocumentProcessingException:
-            raise
 
         except Exception as exc:
-            logger.exception(
-                "Docling failed to process document: %s",
-                file_path,
-            )
+            raise RuntimeError(f"Docling failed to process '{path.name}': {exc}") from exc
 
-            raise DocumentProcessingException(
-                f"Docling failed to process '{path.name}': {exc}"
-            ) from exc
+    def _convert(self, path: Path) -> Any:
+        """
+        Handle both public Docling return styles encountered across
+        Docling v2 installations (ConversionResult or Generator).
+        """
+        result = self.converter.convert(str(path))
+
+        # Normal public ConversionResult.
+        if hasattr(result, "document"):
+            return result
+
+        # Generator / iterator returned by the installed Docling build.
+        if hasattr(result, "__next__"):
+            try:
+                return next(result)
+            except StopIteration as exc:
+                raise RuntimeError(f"Docling returned an empty conversion iterator for '{path.name}'") from exc
+
+        # Other iterable implementations.
+        if hasattr(result, "__iter__") and not isinstance(result, (str, bytes, dict, list, tuple)):
+            iterator = iter(result)
+            try:
+                return next(iterator)
+            except StopIteration as exc:
+                raise RuntimeError(f"Docling returned an empty conversion iterator for '{path.name}'") from exc
+
+        raise TypeError(f"Unsupported Docling conversion result type: {type(result).__name__}")
+
+    @staticmethod
+    def _extract_document(result: Any) -> Any:
+        """Extract Docling's DoclingDocument from a normalized ConversionResult."""
+        document = getattr(result, "document", None)
+        if document is not None:
+            return document
+        raise AttributeError(
+            f"Docling conversion result does not contain a 'document' attribute. Received: {type(result).__name__}"
+        )
+
+    @staticmethod
+    def _markdown_to_sections(markdown: str, filename: str) -> List[ParsedSection]:
+        """Convert Docling Markdown into ParsedSection objects."""
+        lines = markdown.splitlines()
+        sections: List[ParsedSection] = []
+        
+        chapter = ""
+        section = ""
+        subsection = ""
+        
+        current_lines: List[str] = []
+        current_heading = ""
+
+        def flush() -> None:
+            nonlocal current_lines
+            content = "\n".join(current_lines).strip()
+            if not content:
+                current_lines = []
+                return
+            
+            sections.append(ParsedSection(
+                content=content,
+                page=None,
+                chapter=chapter,
+                section=section or subsection,
+                content_type="text",
+                source_type="docling",
+                metadata={
+                    "filename": filename,
+                    "chapter": chapter,
+                    "section": section,
+                    "subsection": subsection,
+                    "heading": current_heading,
+                },
+            ))
+            current_lines = []
+
+        for line in lines:
+            stripped = line.strip()
+
+            if stripped.startswith("### "):
+                flush()
+                subsection = stripped[4:].strip()
+                current_heading = subsection
+                current_lines.append(line)
+                continue
+
+            if stripped.startswith("## "):
+                flush()
+                section = stripped[3:].strip()
+                subsection = ""
+                current_heading = section
+                current_lines.append(line)
+                continue
+
+            if stripped.startswith("# "):
+                flush()
+                chapter = stripped[2:].strip()
+                section = ""
+                subsection = ""
+                current_heading = chapter
+                current_lines.append(line)
+                continue
+
+            current_lines.append(line)
+
+        flush()
+        return sections
