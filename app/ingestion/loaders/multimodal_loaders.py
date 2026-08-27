@@ -1,58 +1,65 @@
 import os
-import io
 import logging
 import subprocess
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from groq import Groq
-import fitz  # PyMuPDF
-from PIL import Image
 from app.ingestion.loaders.base import DocumentLoader, ParsedSection
 
 logger = logging.getLogger(__name__)
 
 class GeminiVisionLoader(DocumentLoader):
-    """Loads images (PNG, JPG) or PDFs of handwritten notes using Gemini."""
+    """Loads images (PNG, JPG) or PDFs of handwritten notes using Gemini natively."""
     def __init__(self, is_pdf: bool = False):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel('gemini-3.6-flash')
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.is_pdf = is_pdf
 
     def load(self, file_path: str) -> List[ParsedSection]:
         sections = []
         
+        # Read the raw bytes of the file
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+            
+        # Determine the correct MIME type
         if self.is_pdf:
-            doc = fitz.open(file_path)
-            for page_num, page in enumerate(doc, start=1):
-                pix = page.get_pixmap(dpi=200)
-                img_bytes = pix.tobytes("png")
-                markdown = self._analyze_image(img_bytes)
-                sections.append(ParsedSection(
-                    content=markdown, page=page_num, source_type="gemini_vision_pdf"
-                ))
-            doc.close()
+            mime_type = "application/pdf"
+        elif file_path.lower().endswith(".png"):
+            mime_type = "image/png"
         else:
-            with open(file_path, "rb") as img_file:
-                img_bytes = img_file.read()
-            markdown = self._analyze_image(img_bytes)
-            sections.append(ParsedSection(content=markdown, source_type="gemini_vision_image"))
+            mime_type = "image/jpeg"
+            
+        markdown = self._analyze_file(file_bytes, mime_type)
+        
+        sections.append(ParsedSection(
+            content=markdown,
+            source_type="gemini_vision",
+            metadata={"original_file": os.path.basename(file_path)}
+        ))
             
         return sections
 
-    def _analyze_image(self, image_bytes: bytes) -> str:
+    def _analyze_file(self, file_bytes: bytes, mime_type: str) -> str:
         prompt = (
             "You are an expert educational assistant. "
-            "Carefully transcribe all text in this image, including handwriting. "
+            "Carefully transcribe all text in this document, including handwriting. "
             "If it contains math equations, transcribe them in LaTeX. "
             "If it is a diagram, explain it in detail. Format output in clean Markdown."
         )
         try:
-            img = Image.open(io.BytesIO(image_bytes))
-            response = self.model.generate_content([prompt, img])
+            # Pass the raw file bytes directly to Gemini
+            response = self.client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=[
+                    prompt,
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+                ]
+            )
             return response.text
         except Exception as e:
             logger.error(f"Gemini Vision failed: {e}")
-            raise RuntimeError(f"Gemini failed to process image: {e}")
+            raise RuntimeError(f"Gemini failed to process file: {e}")
 
 
 class GroqAudioLoader(DocumentLoader):
