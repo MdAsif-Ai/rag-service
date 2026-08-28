@@ -28,7 +28,7 @@ class IngestionService:
         
         course_id = metadata.course_id
         
-        # Clean up placeholder strings and empty strings from Swagger UI
+        # Clean all parameters (ignores empty strings and "string")
         filename = clean_param(metadata.filename)
         chapter = clean_param(metadata.chapter)
         section = clean_param(metadata.section)
@@ -40,7 +40,7 @@ class IngestionService:
         if url and not url.startswith("http"):
             url = None
 
-        # Check if a physical file was actually provided (Swagger sends empty string for file if none selected)
+        # Check if a physical file was actually provided
         has_file = file is not None and file.filename and file.filename.strip() != ""
 
         # Handle Physical File vs URL
@@ -52,7 +52,6 @@ class IngestionService:
             if not filename:
                 filename = "youtube_video"
         elif has_file:
-            # If filename was blank or 'string', use the actual uploaded file's name
             if not filename:
                 filename = file.filename or "uploaded_file"
                 

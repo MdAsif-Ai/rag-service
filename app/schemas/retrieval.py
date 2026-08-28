@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 class RetrievalFilters(BaseModel):
     """Validated internal filter model to prevent arbitrary Qdrant filters."""
@@ -8,6 +8,23 @@ class RetrievalFilters(BaseModel):
     sections: Optional[List[str]] = None
     content_types: Optional[List[str]] = None
     pages: Optional[List[int]] = None
+
+    # Auto-clean Swagger "string", empty strings, and 0 placeholders
+    @field_validator('document_ids', 'chapters', 'sections', 'content_types', 'pages', mode='before')
+    @classmethod
+    def remove_placeholders(cls, v):
+        if isinstance(v, list):
+            cleaned = []
+            for item in v:
+                if item is None:
+                    continue
+                if isinstance(item, str) and (item.strip() == "" or item.lower() == "string"):
+                    continue
+                if isinstance(item, int) and item == 0:
+                    continue
+                cleaned.append(item)
+            return cleaned if cleaned else None
+        return v
 
 class RetrievalRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000, description="The search query")
