@@ -46,6 +46,8 @@ class IngestionService:
             file_size = 0
             checksum = hashlib.sha256(url.encode()).hexdigest()
             storage_path = url
+            if not filename:
+                filename = "youtube_video"
         else:
             if not file:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No file provided. Either upload a file or provide a valid URL.")

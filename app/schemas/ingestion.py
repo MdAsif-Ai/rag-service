@@ -9,8 +9,10 @@ class IngestionMetadata(BaseModel):
     Sent as form data alongside the file in the multipart request.
     """
     course_id: str = Field(..., min_length=1)
-    filename: str = Field(..., min_length=1)
-    file_metadata: Optional[Dict[str, Any]] = None
+    filename: Optional[str] = Field(default=None)
+    chapter: Optional[str] = None
+    section: Optional[str] = None
+    source_type: Optional[str] = None
     content_format: Optional[str] = Field(
         default="auto", 
         description="Hint for parser: e.g., 'auto', 'handwritten', 'diagram', 'scanned'"

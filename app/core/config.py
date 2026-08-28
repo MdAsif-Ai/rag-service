@@ -48,11 +48,12 @@ class Settings(BaseSettings):
             return [content.strip() for content in v.split(",")]
         return v
 
+    CELERY_TASK_TIME_LIMIT: int = Field(default=7200, description="2 hours hard limit")
+    CELERY_TASK_SOFT_TIME_LIMIT: int = Field(default=6900, description="1 hour 55 minutes soft limit")
+
     CELERY_TASK_ACKS_LATE: bool = Field(default=True)
     CELERY_TASK_REJECT_ON_WORKER_LOST: bool = Field(default=True)
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = Field(default=1)
-    CELERY_TASK_TIME_LIMIT: int = Field(default=1800)
-    CELERY_TASK_SOFT_TIME_LIMIT: int = Field(default=1500)
     CELERY_MAX_RETRIES: int = Field(default=3)
     CELERY_RETRY_DELAY: int = Field(default=60)
     TENACITY_MAX_RETRIES: int = Field(default=3)
