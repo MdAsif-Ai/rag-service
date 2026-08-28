@@ -11,6 +11,12 @@ from app.schemas.ingestion import IngestionResponse, IngestionMetadata
 from app.schemas.jobs import JobStatus
 from app.jobs.ingestion import ingest_document
 
+def clean_param(value: Optional[str]) -> Optional[str]:
+    """Helper to clear out Swagger 'string' placeholders."""
+    if value and value.lower() == "string":
+        return None
+    return value
+
 class IngestionService:
     @staticmethod
     async def process_upload(
@@ -21,33 +27,45 @@ class IngestionService:
         supabase = get_supabase_client()
         
         course_id = metadata.course_id
-        filename = metadata.filename
-        content_format = metadata.content_format or "auto"
-        url = metadata.url
+        
+        # Clean up placeholder strings from Swagger UI
+        filename = clean_param(metadata.filename)
+        chapter = clean_param(metadata.chapter)
+        section = clean_param(metadata.section)
+        source_type = clean_param(metadata.source_type)
+        content_format = clean_param(metadata.content_format) or "auto"
+        url = clean_param(metadata.url)
 
-        # Handle YouTube URL vs Physical File
+        # Smart URL check: Only treat it as a URL if it actually starts with http
+        if url and not url.startswith("http"):
+            url = None
+
+        # Handle Physical File vs URL
         if url:
             file_type = "youtube"
             file_size = 0
-            # Use the URL as the checksum and storage path
             checksum = hashlib.sha256(url.encode()).hexdigest()
             storage_path = url
         else:
             if not file:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No file provided.")
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No file provided. Either upload a file or provide a valid URL.")
+            
+            # If filename was blank or 'string', use the actual uploaded file's name
+            if not filename:
+                filename = file.filename or "uploaded_file"
                 
             ext = filename.split(".")[-1].lower() if "." in filename else ""
             if ext not in settings.SUPPORTED_FILE_TYPES:
                 raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=f"Unsupported file type: .{ext}")
 
+            file_type = ext
             file_bytes = await file.read()
             if len(file_bytes) > settings.MAX_FILE_SIZE_MB * 1024 * 1024:
                 raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File size exceeds maximum limit")
 
-            file_type = ext
             file_size = len(file_bytes)
             checksum = hashlib.sha256(file_bytes).hexdigest()
-            storage_path = "" # Will be updated after upload
+            storage_path = "" 
 
         # 4. Duplicate Detection
         existing = supabase.table("documents").select("id").eq("checksum", checksum).eq("course_id", course_id).execute()

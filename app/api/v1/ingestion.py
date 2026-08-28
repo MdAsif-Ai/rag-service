@@ -17,7 +17,7 @@ router = APIRouter()
 async def ingest_document(
     file: Optional[UploadFile] = File(None, description="The document file to ingest"),
     course_id: str = Form(..., description="The course ID this document belongs to"),
-    filename: str = Form(..., description="The original filename or video title"),
+    filename: Optional[str] = Form(None, description="The original filename or video title"),
     chapter: Optional[str] = Form(None, description="Optional chapter association"),
     section: Optional[str] = Form(None, description="Optional section association"),
     source_type: Optional[str] = Form(None, description="Optional source type metadata"),
@@ -27,7 +27,7 @@ async def ingest_document(
     """
     Accepts a document upload OR a URL, stores it, and queues an asynchronous ingestion job.
     """
-    logger.info(f"Received ingestion request for course: {course_id}, file: {filename}")
+    logger.info(f"Received ingestion request for course: {course_id}")
     
     metadata = IngestionMetadata(
         course_id=course_id,
