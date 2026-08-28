@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE_TOKENS: int = Field(default=600)
     CHUNK_OVERLAP_TOKENS: int = Field(default=100)
     CHUNK_TOKENIZER: str = Field(default="cl100k_base")
-    SUPPORTED_FILE_TYPES: List[str] = Field(default=["pdf", "docx", "pptx", "txt", "md", "html"])
+    SUPPORTED_FILE_TYPES: List[str] = Field(default=["pdf", "docx", "pptx", "txt", "md", "html", "mp3", "wav", "m4a", "mp4", "mkv", "avi", "png", "jpg", "jpeg"])
 
     @field_validator("SUPPORTED_FILE_TYPES", mode="before")
     @classmethod

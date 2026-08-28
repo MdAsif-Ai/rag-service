@@ -1,13 +1,50 @@
 import os
+import io
 import logging
 import subprocess
+import glob
 from typing import List, Optional
 from google import genai
 from google.genai import types
 from groq import Groq
+from PIL import Image
 from app.ingestion.loaders.base import DocumentLoader, ParsedSection
 
 logger = logging.getLogger(__name__)
+
+def transcribe_large_audio(client: Groq, audio_path: str) -> List:
+    """Splits audio into 20-min chunks using ffmpeg and transcribes via Groq."""
+    chunks_dir = "temp_audio_chunks"
+    os.makedirs(chunks_dir, exist_ok=True)
+    
+    # Split audio into 1200-second (20-min) segments
+    subprocess.run([
+        "ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "1200", 
+        "-c", "copy", f"{chunks_dir}/chunk_%03d.mp3"
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    chunk_files = sorted(glob.glob(f"{chunks_dir}/chunk_*.mp3"))
+    all_segments = []
+    time_offset = 0.0
+    
+    for chunk_file in chunk_files:
+        logger.info(f"Transcribing chunk: {chunk_file}")
+        with open(chunk_file, "rb") as f:
+            transcript = client.audio.transcriptions.create(
+                file=(chunk_file, f.read()),
+                model="whisper-large-v3",
+                response_format="verbose_json"
+            )
+            for segment in transcript.segments:
+                segment["start"] += time_offset
+                segment["end"] += time_offset
+                all_segments.append(segment)
+                
+        time_offset += 1200.0
+        os.remove(chunk_file)
+        
+    os.rmdir(chunks_dir)
+    return all_segments
 
 class GeminiVisionLoader(DocumentLoader):
     """Loads images (PNG, JPG) or PDFs of handwritten notes using Gemini natively."""
@@ -17,12 +54,9 @@ class GeminiVisionLoader(DocumentLoader):
 
     def load(self, file_path: str) -> List[ParsedSection]:
         sections = []
-        
-        # Read the raw bytes of the file
         with open(file_path, "rb") as f:
             file_bytes = f.read()
             
-        # Determine the correct MIME type
         if self.is_pdf:
             mime_type = "application/pdf"
         elif file_path.lower().endswith(".png"):
@@ -31,13 +65,11 @@ class GeminiVisionLoader(DocumentLoader):
             mime_type = "image/jpeg"
             
         markdown = self._analyze_file(file_bytes, mime_type)
-        
         sections.append(ParsedSection(
             content=markdown,
             source_type="gemini_vision",
             metadata={"original_file": os.path.basename(file_path)}
         ))
-            
         return sections
 
     def _analyze_file(self, file_bytes: bytes, mime_type: str) -> str:
@@ -48,9 +80,8 @@ class GeminiVisionLoader(DocumentLoader):
             "If it is a diagram, explain it in detail. Format output in clean Markdown."
         )
         try:
-            # Pass the raw file bytes directly to Gemini
             response = self.client.models.generate_content(
-                model="gemini-3.6-flash",
+                model="gemini-2.0-flash",
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
@@ -81,18 +112,17 @@ class GroqAudioLoader(DocumentLoader):
 
         logger.info(f"Transcribing audio with Groq Whisper: {audio_path}")
         
-        with open(audio_path, "rb") as file:
-            transcript = self.client.audio.transcriptions.create(
-                file=(audio_path, file.read()),
-                model="whisper-large-v3",
-                response_format="verbose_json"
-            )
+        try:
+            segments = transcribe_large_audio(self.client, audio_path)
+        except Exception as e:
+            logger.error(f"Audio transcription failed: {e}")
+            segments = []
 
         if self.url and os.path.exists(audio_path):
             os.remove(audio_path)
 
         sections = []
-        for segment in transcript.segments:
+        for segment in segments:
             start_time = segment.get("start", 0)
             text = segment.get("text", "").strip()
             if text:
@@ -120,18 +150,18 @@ class VideoLoader(DocumentLoader):
         ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         logger.info(f"Transcribing video audio with Groq Whisper: {audio_path}")
-        with open(audio_path, "rb") as file:
-            transcript = self.client.audio.transcriptions.create(
-                file=(audio_path, file.read()),
-                model="whisper-large-v3",
-                response_format="verbose_json"
-            )
+        
+        try:
+            segments = transcribe_large_audio(self.client, audio_path)
+        except Exception as e:
+            logger.error(f"Video transcription failed: {e}")
+            segments = []
 
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
         sections = []
-        for segment in transcript.segments:
+        for segment in segments:
             start_time = segment.get("start", 0)
             text = segment.get("text", "").strip()
             if text:

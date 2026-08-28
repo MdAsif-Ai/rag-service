@@ -1,5 +1,5 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, Request, UploadFile, Form, status
+from typing import Optional, Union
+from fastapi import APIRouter, Depends, UploadFile, File, Form, status
 from loguru import logger
 
 from app.core.security import verify_api_key
@@ -15,7 +15,7 @@ router = APIRouter()
     dependencies=[Depends(verify_api_key)]
 )
 async def ingest_document(
-    request: Request,
+    file: Optional[Union[UploadFile, str]] = File(None, description="The document file to ingest"),
     course_id: str = Form(..., description="The course ID this document belongs to"),
     filename: Optional[str] = Form(None),
     chapter: Optional[str] = Form(None),
@@ -27,10 +27,8 @@ async def ingest_document(
     """
     Accepts a document upload OR a URL, stores it, and queues an asynchronous ingestion job.
     """
-    # Safely extract file to avoid Swagger empty string crash
-    form = await request.form()
-    file = form.get("file")
-    if not isinstance(file, UploadFile):
+    # Safely handle Swagger empty string bug
+    if isinstance(file, str):
         file = None
         
     metadata = IngestionMetadata(
