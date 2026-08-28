@@ -91,6 +91,7 @@ dependencies = [
     "groq>=1.7.0",
     "yt-dlp>=2026.8.19",
     "google-generativeai>=0.8.6",
+    "google-genai>=2.20.0",
 ]
 
 
