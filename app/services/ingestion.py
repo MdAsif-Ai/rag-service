@@ -12,8 +12,8 @@ from app.schemas.jobs import JobStatus
 from app.jobs.ingestion import ingest_document
 
 def clean_param(value: Optional[str]) -> Optional[str]:
-    """Helper to clear out Swagger 'string' placeholders."""
-    if value and value.lower() == "string":
+    """Helper to clear out Swagger 'string' placeholders and empty strings."""
+    if not value or value.strip() == "" or value.lower() == "string":
         return None
     return value
 
@@ -28,7 +28,7 @@ class IngestionService:
         
         course_id = metadata.course_id
         
-        # Clean up placeholder strings from Swagger UI
+        # Clean up placeholder strings and empty strings from Swagger UI
         filename = clean_param(metadata.filename)
         chapter = clean_param(metadata.chapter)
         section = clean_param(metadata.section)
@@ -40,6 +40,9 @@ class IngestionService:
         if url and not url.startswith("http"):
             url = None
 
+        # Check if a physical file was actually provided (Swagger sends empty string for file if none selected)
+        has_file = file is not None and file.filename and file.filename.strip() != ""
+
         # Handle Physical File vs URL
         if url:
             file_type = "youtube"
@@ -48,10 +51,7 @@ class IngestionService:
             storage_path = url
             if not filename:
                 filename = "youtube_video"
-        else:
-            if not file:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No file provided. Either upload a file or provide a valid URL.")
-            
+        elif has_file:
             # If filename was blank or 'string', use the actual uploaded file's name
             if not filename:
                 filename = file.filename or "uploaded_file"
@@ -68,6 +68,11 @@ class IngestionService:
             file_size = len(file_bytes)
             checksum = hashlib.sha256(file_bytes).hexdigest()
             storage_path = "" 
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, 
+                detail="No file provided and no valid URL provided. You must provide one."
+            )
 
         # 4. Duplicate Detection
         existing = supabase.table("documents").select("id").eq("checksum", checksum).eq("course_id", course_id).execute()
@@ -101,7 +106,7 @@ class IngestionService:
             raise HTTPException(status_code=500, detail="Failed to create ingestion records.")
 
         # 6. Upload to Storage (Only if it's a physical file)
-        if not url:
+        if has_file and not url:
             try:
                 storage_path = storage_service.upload_file(file_bytes, uuid.UUID(doc_id), filename, file.content_type)
                 supabase.table("documents").update({"storage_path": storage_path}).eq("id", doc_id).execute()
