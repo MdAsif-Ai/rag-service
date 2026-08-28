@@ -50,13 +50,18 @@ COPY --chown=appuser:appuser --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-# Set HuggingFace cache directory to a path we can mount
+
+# Set HuggingFace and Tiktoken cache directories to paths we can mount
 ENV HF_HOME=/app/hf_cache
+ENV TIKTOKEN_CACHE_DIR=/app/tiktoken_cache
+
+# Pre-download the tiktoken dictionary so it doesn't hang at runtime
+RUN mkdir -p /app/tiktoken_cache && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 
 # Copy application code
 COPY --chown=appuser:appuser . /app
 
-# Ensure appuser owns the entire /app directory (fixes EasyOCR permission errors)
+# Ensure appuser owns the entire /app directory (fixes EasyOCR/tiktoken permission errors)
 RUN chown -R appuser:appuser /app
 
 USER appuser
