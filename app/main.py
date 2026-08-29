@@ -106,7 +106,8 @@ def create_app() -> FastAPI:
     
     return app
 
-app = create_app()from contextlib import asynccontextmanager
+app = create_app()
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 import uuid
 
@@ -214,7 +215,9 @@ def create_app() -> FastAPI:
     
     return app
 
-app = create_app()from contextlib import asynccontextmanager
+app = create_app()
+
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 import uuid
 
