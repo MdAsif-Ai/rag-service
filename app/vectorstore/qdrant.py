@@ -283,27 +283,23 @@ class QdrantRepository:
 
     def _build_filter(
         self,
-        course_ids: List[str],
+        course_ids: Optional[List[str]],
         filters: Optional[Dict[str, Any]] = None,
-    ) -> Filter:
+    ) -> Optional[Filter]:
         """
-        Build a mandatory course-level filter.
-
-        This prevents retrieval across courses.
+        Build a filter for Qdrant.
+        If course_ids is provided, it filters by course. If not, it searches globally.
         """
-
-        if not course_ids:
-            raise QdrantException(
-                "course_ids must be provided to prevent "
-                "cross-course retrieval."
+        conditions = []
+        
+        # Only add course_id filter if specific courses are requested
+        if course_ids:
+            conditions.append(
+                FieldCondition(
+                    key="course_id",
+                    match=MatchAny(any=course_ids),
+                )
             )
-
-        conditions = [
-            FieldCondition(
-                key="course_id",
-                match=MatchAny(any=course_ids),
-            )
-        ]
 
         if filters:
             for key, value in filters.items():
@@ -322,6 +318,10 @@ class QdrantRepository:
                         )
                     )
 
+        # If no conditions were added, return None (meaning "search everything")
+        if not conditions:
+            return None
+
         return Filter(must=conditions)
 
     # ------------------------------------------------------------------
@@ -331,7 +331,7 @@ class QdrantRepository:
     def search_dense(
         self,
         query_vector: List[float],
-        course_ids: List[str],
+        course_ids: Optional[List[str]],
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
@@ -368,7 +368,7 @@ class QdrantRepository:
     def search_sparse(
         self,
         sparse_vector: Dict[int, float],
-        course_ids: List[str],
+        course_ids: Optional[List[str]],
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:

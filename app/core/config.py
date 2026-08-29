@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     DEFAULT_TOP_K: int = Field(default=50)
     SPARSE_TOP_K: int = Field(default=50)
     FUSION_TOP_K: int = Field(default=30)
-    FINAL_TOP_K: int = Field(default=5)
+    FINAL_TOP_K: int = Field(default=20)
     FUSION_RRF_K: int = Field(default=60)
     FUSION_DENSE_WEIGHT: float = Field(default=1.0)
     FUSION_SPARSE_WEIGHT: float = Field(default=1.0)

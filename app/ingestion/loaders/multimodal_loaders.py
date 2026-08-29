@@ -81,7 +81,7 @@ class GeminiVisionLoader(DocumentLoader):
         )
         try:
             response = self.client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.5-flash",
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=file_bytes, mime_type=mime_type)

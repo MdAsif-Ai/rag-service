@@ -1,0 +1,11 @@
+  global:
+    scrape_interval: 15s
+
+  scrape_configs:
+    - job_name: 'rag-api'
+      metrics_path: '/metrics'
+      static_configs:
+        - targets: 
+          - '192.168.76.13:8001'
+          - '192.168.76.14:8001'
+          - '192.168.76.254:8001'

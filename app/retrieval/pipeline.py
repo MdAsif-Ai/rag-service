@@ -50,7 +50,7 @@ class RetrievalPipeline:
     async def retrieve(
         self, 
         query: str, 
-        course_ids: List[str], 
+        course_ids: Optional[List[str]], 
         top_k: Optional[int] = None,
         filters: Optional[RetrievalFilters] = None
     ) -> RetrievalResponse:
@@ -61,8 +61,6 @@ class RetrievalPipeline:
         """
         if not query or not query.strip():
             raise ValidationException("Query cannot be empty.")
-        if not course_ids:
-            raise ValidationException("course_ids must be provided.")
 
         start_time = time.time()
         settings = get_settings()
@@ -77,19 +75,40 @@ class RetrievalPipeline:
             embeddings: QueryEmbeddingResult = await asyncio.to_thread(self.encoder.encode, query)
             metrics.embedding_latency_ms = (time.time() - t0) * 1000
             
+            # --- AUTO-COURSE DETECTION ---
+            # If no course_id is provided, do a quick global search to find the best course
+            if not course_ids:
+                logger.info(f"[{q_hash}] No course_id provided. Running auto-detection...")
+                # Search globally (empty list means search all courses)
+                quick_results = await asyncio.to_thread(
+                    self.dense.retrieve, embeddings.dense_vector, [], 5, filters
+                )
+                
+                if quick_results:
+                    # Find which course_id appears most often in the top results
+                    from collections import Counter
+                    course_counts = Counter([r.course_id for r in quick_results if r.course_id])
+                    if course_counts:
+                        best_course = course_counts.most_common(1)[0][0]
+                        course_ids = [best_course]
+                        logger.info(f"[{q_hash}] Auto-detected course_id: {best_course}")
+            
+            # Fallback to empty list if auto-detection failed, so it searches globally
+            search_courses = course_ids if course_ids else []
+            
             # 2. Concurrent Retrieval (sync Qdrant client isolated in threads)
             t1 = time.time()
             dense_task = asyncio.to_thread(
                 self.dense.retrieve, 
                 embeddings.dense_vector, 
-                course_ids=course_ids, 
+                course_ids=search_courses, 
                 top_k=settings.DENSE_TOP_K, 
                 filters=filters
             )
             sparse_task = asyncio.to_thread(
                 self.sparse.retrieve, 
                 embeddings.sparse_vector, 
-                course_ids=course_ids, 
+                course_ids=search_courses, 
                 top_k=settings.SPARSE_TOP_K, 
                 filters=filters
             )

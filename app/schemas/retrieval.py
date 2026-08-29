@@ -16,21 +16,35 @@ class RetrievalFilters(BaseModel):
         if isinstance(v, list):
             cleaned = []
             for item in v:
-                if item is None:
-                    continue
-                if isinstance(item, str) and (item.strip() == "" or item.lower() == "string"):
-                    continue
-                if isinstance(item, int) and item == 0:
-                    continue
+                if item is None: continue
+                if isinstance(item, str) and (item.strip() == "" or item.lower() == "string"): continue
+                if isinstance(item, int) and item == 0: continue
                 cleaned.append(item)
             return cleaned if cleaned else None
         return v
 
 class RetrievalRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1000, description="The search query")
-    course_ids: List[str] = Field(..., min_length=1, description="Restrict search to these course IDs")
+    # Optional: Leave empty to auto-detect the course.
+    course_ids: Optional[List[str]] = Field(default=None, description="Optional: Restrict search to these course IDs. Leave empty to auto-detect.")
     top_k: int = Field(default=5, ge=1, le=50, description="Number of final results to return")
     filters: Optional[RetrievalFilters] = Field(default=None, description="Optional metadata filters")
+
+    # --- ADD THIS VALIDATOR ---
+    # This cleans the course_ids list so "string" and "" are removed, 
+    # turning it into None so Auto-Detection triggers.
+    @field_validator('course_ids', mode='before')
+    @classmethod
+    def clean_course_ids(cls, v):
+        if isinstance(v, list):
+            cleaned = []
+            for item in v:
+                if item is None: continue
+                if isinstance(item, str) and (item.strip() == "" or item.lower() == "string"): continue
+                cleaned.append(item)
+            return cleaned if cleaned else None
+        return v
+    # --------------------------
 
 class RetrievedChunk(BaseModel):
     chunk_id: str
