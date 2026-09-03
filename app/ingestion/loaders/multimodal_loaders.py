@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import logging
 import subprocess
 import glob
@@ -81,7 +82,7 @@ class GeminiVisionLoader(DocumentLoader):
         )
         try:
             response = self.client.models.generate_content(
-                model="gemini-3.5-flash",
+                model="gemini-2.0-flash",
                 contents=[
                     prompt,
                     types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
@@ -173,3 +174,43 @@ class VideoLoader(DocumentLoader):
                     metadata={"start_time": start_time}
                 ))
         return sections
+
+
+class JSONLoader(DocumentLoader):
+    """Loads JSON files and flattens them into readable text for RAG."""
+    def load(self, file_path: str) -> List[ParsedSection]:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in {file_path}: {e}")
+                raise RuntimeError(f"Invalid JSON: {e}")
+
+        # Convert nested JSON into readable text
+        text_content = self._extract_text(data)
+        
+        if not text_content.strip():
+            raise RuntimeError("JSON file contained no text content.")
+            
+        return [ParsedSection(
+            content=text_content,
+            section="JSON Data",
+            source_type="json"
+        )]
+
+    def _extract_text(self, data, prefix=""):
+        """Recursively extracts text from JSON keys and values."""
+        text_parts = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, (dict, list)):
+                    text_parts.append(self._extract_text(value, prefix=f"{prefix}{key}."))
+                else:
+                    text_parts.append(f"{prefix}{key}: {value}")
+        elif isinstance(data, list):
+            for item in data:
+                text_parts.append(self._extract_text(item, prefix=prefix))
+        else:
+            text_parts.append(str(data))
+            
+        return "\n".join(text_parts)

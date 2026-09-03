@@ -76,12 +76,13 @@ class Settings(BaseSettings):
     FUSION_SPARSE_WEIGHT: float = Field(default=1.0)
     DENSE_TOP_K: int = Field(default=20)
 
-
     MAX_FILE_SIZE_MB: int = Field(default=50)
     CHUNK_SIZE_TOKENS: int = Field(default=600)
     CHUNK_OVERLAP_TOKENS: int = Field(default=100)
     CHUNK_TOKENIZER: str = Field(default="cl100k_base")
-    SUPPORTED_FILE_TYPES: List[str] = Field(default=["pdf", "docx", "pptx", "txt", "md", "html", "mp3", "wav", "m4a", "mp4", "mkv", "avi", "png", "jpg", "jpeg"])
+    
+    # Added "json" to the list of supported file types
+    SUPPORTED_FILE_TYPES: List[str] = Field(default=["pdf", "docx", "pptx", "txt", "md", "html", "mp3", "wav", "m4a", "mp4", "mkv", "avi", "png", "jpg", "jpeg", "json"])
 
     @field_validator("SUPPORTED_FILE_TYPES", mode="before")
     @classmethod

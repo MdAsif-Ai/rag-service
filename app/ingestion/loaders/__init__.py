@@ -2,7 +2,7 @@ from typing import Any, Type, Optional
 from app.core.exceptions import UnsupportedFileException
 from .base import DocumentLoader, ParsedSection
 from .docling_loader import DoclingLoader
-from .multimodal_loaders import GeminiVisionLoader, GroqAudioLoader, VideoLoader
+from .multimodal_loaders import GeminiVisionLoader, GroqAudioLoader, VideoLoader, JSONLoader
 
 LOADER_MAP: dict[str, Type[Any]] = {
     "pdf": DoclingLoader,
@@ -26,6 +26,9 @@ LOADER_MAP: dict[str, Type[Any]] = {
     "png": GeminiVisionLoader,
     "jpg": GeminiVisionLoader,
     "jpeg": GeminiVisionLoader,
+    
+    # JSON format
+    "json": JSONLoader,
 }
 
 def get_loader(file_type: str, content_format: str = "auto", url: str = None) -> DocumentLoader:
